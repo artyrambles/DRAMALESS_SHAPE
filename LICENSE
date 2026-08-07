@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Arty
+Copyright (c) 2026 Stahltier
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The OpenXR loader is shipped unmodified in assets/vr (Apache-2.0; full license text alongside the DLL).
+
+This repo contains code from DramaticShape's [Dramatic Shape Voxel Mod](https://github.com/DramaticShape/DramaticShapeVoxelMod) (now defunct).
+It also contains code from absol89's fork [BATTLE ART](https://github.com/absol89/DramaticShapeVoxelMod).
+It also contains code from the [TERRARIUM](https://github.com/BrenoBertucci/Terrarium) fork created by BrenoBertucci.
+
+It also contains my own code which is provided under the [CC-BY-NC License](https://creativecommons.org/licenses/by-nc/4.0/).
