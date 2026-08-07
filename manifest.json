@@ -1,0 +1,25 @@
+{
+  "id": "DRAMALESS_SHAPE"
+,
+  "name": "Dramaless Shape Voxel Mod",
+  "version": "1.6.2.ST",
+  "api": 2,
+  "entry": "main.lua",
+  "profile": "content",
+  "category": "GRAPHICS",
+  "game_version": "0.0.0-dev || >=0.1.37 <2.0.0",
+  "priority": 100,
+  "dependencies": [],
+  "optional_dependencies": [],
+  "conflicts": [
+    "DRAMATIC_SHAPE",
+    "TERRARIUM"
+  ],
+  "permissions": [
+    "engine_internals",
+    "filesystem"
+  ],
+  "affects_link": false,
+  "description": "Draws the overworld as a 3D diorama. Fork with edits by Stahltier, including code from TERRARIUM by BrenoBertucci.",
+  "github": "artyrambles/ST_DramaticShapeVoxelMod"
+}
