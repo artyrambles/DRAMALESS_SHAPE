@@ -105,8 +105,8 @@ local CELL = 16
 -- `player` are the offsets, from the shape's north-west corner, of the two
 -- cells a mon stands on.
 BattleArena.SHAPES = {
-  { id = "wide",   w = 3, h = 7, enemy = { 1, 1 }, player = { 1, 5 } },
-  { id = "narrow", w = 1, h = 5, enemy = { 0, 0 }, player = { 0, 4 } },
+  { id = "wide",   w = 3, h = 7, enemy = { 1, 1 }, player = { 1, 4 } },
+  { id = "narrow", w = 1, h = 5, enemy = { 0, 0 }, player = { 0, 3 } },
 }
 
 -- ------- which way round the fight stands
