@@ -10,16 +10,13 @@ assets from TERRARIUM by BrenoBertucci.
 > I've made many edits and merged in code and assets from the [TERRARIUM](https://github.com/BrenoBertucci/Terrarium)
 > fork created by BrenoBertucci.
 >
-> **The original and main version of the mod is found here:**
+> **The original and main version of the mod was here, but is currently defunct:**
 > https://github.com/DramaticShape/DramaticShapeVoxelMod
 >
-> It ships under its own mod id `TERRARIUM` and its own folder, so it can
-> sit **beside** the original without overwriting it. Both can be installed;
-> both can be installed and enabled together: this fork uses letter hotkeys
-> (v/g/t/c/b/n/p) and its own pipeline ids, so it does not fight upstream's
-> 3/5/6/7/8/9. Still only one world pipeline should own the frame at a time.
+> It ships under its own mod id `DRAMALESS_SHAPE` and its own folder, so it can
+> sit **beside** the original without overwriting it.
 
-A mod for the [PokÃ©mon Gen 1 Recompilation
+A mod for the [Pokémon Gen 1 Recompilation
 Project](https://github.com/bryanthaboi/gen1recomp). The overworld becomes a
 3D diorama: terrain extruded into real geometry, cast shadows that stretch
 through the afternoon, a six-phase day/night cycle with a painted sky and
