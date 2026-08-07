@@ -167,8 +167,6 @@ for anything else.
 
 | path | what it is |
 | --- | --- |
-| [`FEATURES.md`](FEATURES.md) | the full manual â€” every row, every control, every rule |
-| [`MOBILE.md`](MOBILE.md) | why the fork exists and what was changed to make it run (Portuguese) |
 | [`CHANGELOG.md`](CHANGELOG.md) | thirty-one releases, with the reasoning for each |
 | [`STADIUM_ROM_GUIDE.md`](STADIUM_ROM_GUIDE.md) | info for installing Stadium models on mobile devices |
 | `lib/` | the mod itself |
