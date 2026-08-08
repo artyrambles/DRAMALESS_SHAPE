@@ -84,7 +84,7 @@ StadiumMon.REF_HEIGHT = 14 * 1.3
 -- --report prints it). Only ever a reference point for the ratio above, so
 -- a re-extraction that moved it slightly changes nothing but the middle of
 -- the ladder.
-StadiumMon.MEDIAN = 52.25
+StadiumMon.MEDIAN = 52.25 * 1.3
 
 -- How much of the raw size spread survives. See the header.
 StadiumMon.SQUASH = 0.5

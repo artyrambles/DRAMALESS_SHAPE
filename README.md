@@ -1,7 +1,6 @@
 # Dramaless Shape
 
-Draws the overworld as a 3D diorama. Fork with edits by Stahltier, including code and
-assets from TERRARIUM by BrenoBertucci.
+Draws the overworld as a 3D diorama. Fork with edits by Stahltier among others (see Credits section).
 
 > ### This is a fork, not the original or main version of the Dramatic Shape Voxel mod!
 >
@@ -9,6 +8,7 @@ assets from TERRARIUM by BrenoBertucci.
 > by [Dramatic Shape](https://github.com/DramaticShape).**
 > I've made many edits and merged in code and assets from the [TERRARIUM](https://github.com/BrenoBertucci/Terrarium)
 > fork created by BrenoBertucci.
+> There is native compatibility with [StadiumFX](https://github.com/anxiousintrovert/StadiumBattleFX) by anxiousintrovert.
 >
 > **The original and main version of the mod was here, but is currently defunct:**
 > https://github.com/DramaticShape/DramaticShapeVoxelMod
@@ -88,10 +88,9 @@ What that means in practice:
 
 ## NOT made with AI or AI assistance
 
-***Any additions and edits that the Dramaless Shape fork make were NOT created or
-in any way touched by AI.***
-**My code is all 100% organic home-grown human-made
-spaghetti baby**
+***Any additions and edits that the Dramaless Shape fork make were NOT created or**
+**in any way touched by AI.***
+**My code is all 100% organic home-grown human-made spaghetti baby**
 
 ---
 
@@ -103,20 +102,15 @@ pass, the Stadium ROM compatibility, and the over-the-shoulder battles.
 All of that is his work, and it is the reason any of this exists.
 
 Terrarium uses Dramatic Shape 1.3.0 as its base. 
-My edits were based on 1.6.2 and carry the `.ST` version numbering. 
+My edits were based on 1.6.1 and carry the `.ST` version numbering. 
+Originally this mod was a fork of the 1.6.2 version of Dramatic Shape,
+but since the creator of that mod removed the MIT License from the 1.6.2
+version and onward specifically, all changes made between 1.6.1 and 1.6.2
+were manually removed by me from v1.6.3.ST of DRAMALESS_SHAPE and onward.
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 ### Changes made by Stahltier (Dramaless Shape Code)
-- VoxelGrid option is now respected in the 3D Battle screen, if turned OFF it no
-  no longer draws the voxel outlines.
-- Stadium ROM install path fixed for unrooted mobile devices. Please see the
-  STADIUM_ROM_GUIDE.md for instructions how to install the ROM properly on mobile.
-- Larger Stadium models. They were scaled up in comparison to the environment so
-  your big ass Gyarados will no longer look like a little blue Caterpie next to a flower.
-- Adjusted Battle Cam and Stadium Stages. To account for the larger models, the battle
-  camera's position and FoV was adjusted, and the battlers were moved further apart.
-  The ground discs of Stadium Mode B were also scaled accordingly.
-- Added Shadow Quality options to the menu for performance improvements.
+- See CHANGELOG for a full list!
 
 ### It runs on weak hardware (Terrarium Code)
 
@@ -132,6 +126,10 @@ Two new rows on the OPTIONS menu, both visible under every preset:
 
 Plus spatial culling, and a shadow-map size ladder chosen per frame from how
 much world is actually in view.
+
+### More optimization options and performance improvements are planned!
+
+**Please be patient. It's high on my priority list.**
 
 ---
 
@@ -184,25 +182,24 @@ for anything else.
 
 ## License - please read before forking
 
-**The original mod is now defunct as it was taken down by its creator**. 
+**The original mod no longer allows independent forks since version 1.6.2**
+**as the creator removed the MIT License in that version.** 
 Please see the LICENSE.md for details about what you are allowed or not allowed
-to do with the code of this mod.
+to do with the code of THIS version of the mod.
 
 This fork is published in the spirit the original was: freely, for other
 people to read, run and learn from, but I cannot grant you rights over code
 that is not mine to license. If you plan to build on this, **please read and
 follow the LICENSE document.**
 
-Permission to make my fork (DRAMALESS_SHAPE) was given by DramaticShape aka
-KingOfSpain in the BOI'S CLUB GAMES Discord (see ForkPermission.jpg).
 Anyone is free to use my edits and additions to the code to add to their own
-forks or versions of the mod as long as you don't try to impersonate me or
-try to make money off it, as is stated int he LICENSE document.
+forks or versions of the mod as long as you don't try to impersonate me and
+follow the License agreement's terms.
 
 ## Credits
 
 - **[Dramatic Shape](https://github.com/DramaticShape/DramaticShapeVoxelMod)**
-  â€” the voxel mod this is built on. The diorama, the battles and the shape of
+  The voxel mod this is built on. The diorama, the battles and the shape of
   the whole thing are his.
 - **[bryanthaboi](https://github.com/bryanthaboi/gen1recomp)** and the
   Gen1Recomp contributors â€” the engine, and a mod platform generous enough
@@ -210,6 +207,8 @@ try to make money off it, as is stated int he LICENSE document.
 - **[Terrarium](https://github.com/BrenoBertucci/Terrarium)**
   The fork created by BrenoBertucci from which my fork heavily draws assets and
   code, see further above for a full list of their work.
+- **[StadiumFX](https://github.com/anxiousintrovert/StadiumBattleFX)**
+  Compatibility code was provided by its creator and added to this fork.
 - **[iOS UI fixes (wip)](https://github.com/absol89/DramaticShapeVoxelMod/commit/71c800eb143ee3aee49126d675c488282972d3c9)**
   An attempt to fix the iOS UI issues, but not working yet.
 - **Nintendo, Creatures Inc. and GAME FREAK Inc.**: for the game. It is

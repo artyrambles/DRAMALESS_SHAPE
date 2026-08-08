@@ -1,53 +1,63 @@
 # Changelog
 
-## Unreleased
-
-- Added `Stadium.hit(side, effectiveness)`, a safe public API for companion
-  effect mods to request Stadium's real skeletal defender reaction at their
-  exact impact frame without accessing the private model session.
+## 1.6.3
+- Merged [PR#4](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/4#issue-5094930250) and [PR#7](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/7#issue-5095950947) into the main branch, thanks to [anxiousintrovert](https://github.com/anxiousintrovert) for the contributions!
+- The following changes were made by anxiousintrovert to make my fork compatible with their [Stadium Animations](https://github.com/anxiousintrovert/StadiumBattleFX) mod:
+  - Added `Stadium.hit(side, effectiveness)`, a safe public API for companion
+    effect mods to request Stadium's real skeletal defender reaction at their
+    exact impact frame without accessing the private model session.
+- Fixed the unintentional upload of some not-release-ready files to the repo. Please always download the zip from the Releases page,
+  but if you should end up instead downloading the repo directly, it should no longer cause missing file reference errors either.
+- Disabled the ForestFX and FogFX because the underlying code was also removed to comply with the last known License.
+- Aka: All the changes from v1.6.2 of the original mod were reverted to the 1.6.1 version, which was the last version
+  to be released under the MIT license.
+- DRAMALESS_SHAPE is now fully compliant with the [MIT License](https://en.wikipedia.org/wiki/MIT_License) that v1.6.1 of DramaticShapeVoxelMod was released under, which explicitly
+  permits reusing, redistributing, even reselling the entirety of the code (exclusing the OXR library for VR which is released under [APACHE 2.0](https://www.apache.org/licenses/LICENSE-2.0.html)).
+- Switched to proper semantic versioning. Versions from now on will not have the
+  ST label at the end, to make them more readable to computers.
 
 ## 1.6.2.ST
 - Created the fork. This is the edited version of the mod, edits made by Stahltier.
-- edited StadiumInstall.lua to use a different ROM path
-- Merged in Shadow Quality settings from Terrarium fork
-- Merged in QoL and Overworld Mons options from Terrarium fork
-- iOS devices no longer are specifically excluded from the shadow map code, as I couldn't find a reason why they should be singled out
+- added Stadium ROM install instructions. NOTE: Now they actually are in the repo too.
+- Merged in Shadow Quality setting and Render Resolution setting from Terrarium fork
+- ~~Merged in QoL and Overworld Mons options from Terrarium fork~~ NOTE: Sorry, this didn't actually happen.
+- iOS devices no longer are specifically excluded from the shadow map code, as I couldn't find a reason why they should be singled out. NOTE: This unfortunately caused some different problems, I am looking into them.
 - VoxelGrid setting is now respected inside the 3D Battle Screen, the grid is no longer drawn if it was disabled in the options.
 - Stadium models in the battle screen are now bigger in relation to the environment and the battle camera was moved and had its FoV adjusted to account for it. the models were also moved apart further and the Stadium B ground discs were scaled up as well.
-- Re-enabled compatibility with Kanto In First Person Mod in manifest.json
+- Re-enabled compatibility with Kanto In First Person Mod in manifest.json. No specific compat patches were added yet, so it won't work out-of-the-box yet.
 
-## 1.6.2
+## ~~1.6.2~~
 
-### Added
+### ~~Added~~
 
-- **The air of Viridian Forest: volumetric god rays, ground fog, and a
-  FOREST FX row.** An invisible jungle canopy now hangs above the forest's
-  real trees, and light comes down through it as true volumetric beams: a
-  per-pixel march reads the frame's own depth buffer and the sun's own
-  shadow map, so shafts stand exactly where light really breaks between
-  the tree hulls, trunks and passing characters carve dark columns
-  through them, and a wind-blown leaf field at the canopy plane opens and
-  closes the beams like foliage moving overhead. The beams are alpha zero
-  at the canopy and fade in as they descend -- light below the leaves,
-  never a lid above them -- and a forward-scattering term blooms them for
-  a camera looking up into the light, first person especially.
+- ~~**The air of Viridian Forest: volumetric god rays, ground fog, and a~~
+  ~~FOREST FX row.** An invisible jungle canopy now hangs above the forest's~~
+  ~~real trees, and light comes down through it as true volumetric beams: a~~
+  ~~per-pixel march reads the frame's own depth buffer and the sun's own~~
+  ~~shadow map, so shafts stand exactly where light really breaks between~~
+  ~~the tree hulls, trunks and passing characters carve dark columns~~
+  ~~through them, and a wind-blown leaf field at the canopy plane opens and~~
+  ~~closes the beams like foliage moving overhead. The beams are alpha zero~~
+  ~~at the canopy and fade in as they descend -- light below the leaves,~~
+  ~~never a lid above them -- and a forward-scattering term blooms them for~~
+  ~~a camera looking up into the light, first person especially.~~
 
-  The scene shader gains a height-and-distance fog every surface sinks
-  into, and the rays are that fog lit: one shared ramp off the day/night
-  clock colours both, gold spears of sun by day, silver moon rays after
-  dark, dying back through the twilights as one hands over to the other.
-  Pollen drifts through the day's beams and fireflies blink low over the
-  floor at night, all shader-animated and deterministic. A fight staged
-  on the forest floor sits in the same haze at half density.
+  ~~The scene shader gains a height-and-distance fog every surface sinks~~
+  ~~into, and the rays are that fog lit: one shared ramp off the day/night~~
+  ~~clock colours both, gold spears of sun by day, silver moon rays after~~
+  ~~dark, dying back through the twilights as one hands over to the other.~~
+  ~~Pollen drifts through the day's beams and fireflies blink low over the~~
+  ~~floor at night, all shader-animated and deterministic. A fight staged~~
+  ~~on the forest floor sits in the same haze at half density.~~
 
-  The direction never moves: a canopy map's light is pinned to noon (see
-  DayNight.CANOPY), so the beams always agree with the shadows on the
-  floor. Everything is authored per map in `data/map_atmosphere.lua` --
-  a map with no entry spends nothing -- and the **FOREST FX** row (FULL /
-  LOW / OFF, FULL by default) governs the cost: LOW halves the march and
-  stands the particles down. On Android the row offers LOW / OFF only --
-  no mobile driver grants the readable depth the march needs -- so the
-  forest keeps its haze there and loses the beams.
+  ~~The direction never moves: a canopy map's light is pinned to noon (see~~
+  ~~DayNight.CANOPY), so the beams always agree with the shadows on the~~
+  ~~floor. Everything is authored per map in `data/map_atmosphere.lua` --~~
+  ~~a map with no entry spends nothing -- and the **FOREST FX** row (FULL /~~
+  ~~LOW / OFF, FULL by default) governs the cost: LOW halves the march and~~
+  ~~stands the particles down. On Android the row offers LOW / OFF only --~~
+  ~~no mobile driver grants the readable depth the march needs -- so the~~
+  ~~forest keeps its haze there and loses the beams.~~
 
 ## 1.6.1
 

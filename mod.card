@@ -1,9 +1,9 @@
 -- Sharing metadata (25-community-and-ecosystem.md 3.2).  Read by tooling
 -- and the manager detail pane; never by the loader's merge.
 return {
-  summary = "The overworld as a 3D diorama, and battles fought on it: real occlusion, tilt-shift, over-the-shoulder fights. Edited fork made by Stahltier.",
+  summary = "The overworld as a 3D diorama, and battles fought on it: real occlusion, tilt-shift, over-the-shoulder fights. Edited fork of DramaticShapeVoxelMod made by Stahltier.",
   author = "Stahltier",
-  contact = "https://github.com/artyrambles/ST_DramaticShapeVoxelMod",
+  contact = "https://github.com/artyrambles/DRAMALESS_SHAPE",
   tags = { "graphics", "3d", "voxel", "render-pipeline", "presentation",
            "battle" },
   differences = {
@@ -43,8 +43,7 @@ return {
       "a sky behind the diorama at the 75-degree rung, outdoor maps only, coloured by the active palette mode",
       "a hand-authored tile shape profile (data/voxel_heights.lua) a mod can extend",
       "SMOOTH TURN options row (OFF / ON, off by default, and only on the menu while VR is ON): turn continuously with the right stick instead of snapping 45 degrees a flick. The snap is the default because a software turn moves the world past a head that did not move, which is the reliable way to make somebody ill in a headset -- but it costs continuity, so the choice is the player's",
-      "HORDE MODE, on the konami code (Up Up Down Down Left Right Left Right B A) standing in the overworld: the sky drops to a starless violet night, the Lavender Town theme comes up, the camera locks into the player's own head (in VR too), a voxel handgun with working iron sights appears in the right hand, and waves of people -- the map's own NPCs among them -- walk out of the dark to kill you. Score per kill, a random Pokemon cry for each one that falls, no pausing; the horde follows you through doors. Health out is a GAME OVER card with the score and PRESS A, which puts the map, the cell, the facing, the camera rung, the hour, the music and every NPC back exactly as they were. Fire on left click, the pad's right trigger or B, a tap on a touch screen, or the right trigger in VR; reload on R, the pad's X, or B on the right controller; aim down the sights on right click or the left trigger",
-      "the horde's gunshot, dry fire, magazine and slide sounds, synthesized on the game's own emulated Game Boy sound hardware (no audio files ship with the mod)",
+      "HORDE mode is gone!"
     },
     known = {
       "needs shader and depth-canvas support; without them the rows still cycle but the world stays 2D and battles draw plainly",
@@ -69,8 +68,7 @@ return {
       "the Pokedex needs a TRACKED left controller; without one there is no device in hand and the floating panel carries the UI as before",
       "while the VR row is ON, 3D-BTL is held ON and BACK SPRITES held OFF (the headset's battle staging assumes both), and both rows leave the OPTIONS menu until VR goes off -- their stored values come back with them",
       "while a headset is live the battle HUDs keep their classic in-frame slots instead of snapping to the window's edges, and the engine's edge-anchored menus (the START menu above all) are held inside the frame the same way, on the flat mirror too -- both VR screens crop to the GB frame, and a block at the window's edge would be cropped away with it",
-      "VR swapchains prefer plain RGBA8; a runtime that only offers sRGB shows slightly lifted colours",
-      "HORDE MODE is disabled in this fork."
+      "VR swapchains prefer plain RGBA8; a runtime that only offers sRGB shows slightly lifted colours"
     },
   },
   credits = {
@@ -78,7 +76,8 @@ return {
     { who = "pret/pokestadium", for_ = "the decompilation the STADIUM extractor was written against -- the bone matrix chain and where scale is applied (func_800143C0), the rotation basis (func_8000F730), the animation and texture-animation samplers (func_80016FBC / func_80017540), the battle context slots and the move-id constants. No code or data from it is included or redistributed here; see README.md" },
     { who = "The Khronos Group", for_ = "the OpenXR loader shipped unmodified in assets/vr (Apache-2.0; full license text alongside the DLL)" },
     { who = "KingOfSpain", for_ = "The original and main version of this mod."},
-    { who = " BrenoBertucci", for_ = "The TERRARIUM fork of Dramatic Shape which I used code and assets from for this fork."}
+    { who = "BrenoBertucci", for_ = "The TERRARIUM fork of Dramatic Shape which I used code and assets from for this fork."},
+    { who = "anxiousintrovert", for_ = "Compatibility patch with StadiumFX mod."}
   },
   compat = { engine = ">=0.1.37 <2.0.0", modApi = 2 },
 }

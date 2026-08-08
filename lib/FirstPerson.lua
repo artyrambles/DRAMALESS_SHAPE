@@ -761,30 +761,13 @@ function FirstPerson.install()
   -- pressed is remembered per button, so the release always reaches the
   -- overlay even if the capture ended while the button was down --
   -- otherwise a click that outlives the rung strands A held forever.
-  --
-  -- HORDE MODE re-reads the same two buttons as a weapon: left fires,
-  -- right holds the sights. Claimed BEFORE the A/B mapping below rather
-  -- than on top of it, so a click during the mode never also lands as a
-  -- GB button -- otherwise the A that ends the GAME OVER card would be
-  -- spent by the shot that ended the run.
   local mouseHeld = {}
   local MOUSE_BTN = { [1] = "a", [2] = "b" }
-  local function hordeMouse(button, down)
-    local Horde = V.require("Horde")
-    if not Horde.playing() then return false end
-    if button == 1 then
-      if down then V.require("HordeGun").fire() end
-      return true
-    elseif button == 2 then
-      V.require("HordeGun").setAds(down)
-      return true
-    end
-    return false
-  end
+
   do
     local inner = love.mousepressed
     love.mousepressed = function(x, y, button, istouch, presses)
-      if captured and not istouch and hordeMouse(button, true) then return end
+    --  if captured and not istouch then return end
       if captured and not istouch and MOUSE_BTN[button] then
         local Input = require("src.core.Input")
         mouseHeld[button] = true
@@ -797,9 +780,8 @@ function FirstPerson.install()
   do
     local inner = love.mousereleased
     love.mousereleased = function(x, y, button, istouch, presses)
-      -- a release always reaches whoever owns the press: the horde's
-      -- aim-hold has to let go even if the mode ended mid-click
-      if not mouseHeld[button] and hordeMouse(button, false) then return end
+      -- a release always reaches whoever owns the press
+      if not mouseHeld[button] then return end
       if mouseHeld[button] then
         local Input = require("src.core.Input")
         mouseHeld[button] = nil
@@ -839,14 +821,6 @@ function FirstPerson.install()
         local onControl = nil
         pcall(function() onControl = TouchControls:hitTest(x, y) end)
         if not onControl and not lookTouch then
-          -- HORDE MODE: a tap on open screen is a SHOT, fired on the press
-          -- rather than on a release that turned out not to be a drag --
-          -- a shooter that waits to find out whether you meant it is a
-          -- shooter that misses. The same finger still becomes the look
-          -- drag below, so aiming and firing are one gesture.
-          if V.require("Horde").playing() then
-            V.require("HordeGun").fire()
-          end
           lookTouch = { id = id, x = x, y = y }
           return
         end

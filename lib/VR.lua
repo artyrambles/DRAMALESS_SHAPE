@@ -200,11 +200,6 @@ local function shutdown(reason)
   BattleCam.still = false
   VoxelScene.spriteLean = nil
   Pokedex.clear()
-  -- the horde's gun too: its VR frame is a matrix built from a hand pose,
-  -- and a stale one left behind would pin the model to wherever the
-  -- controller was when the session died -- on the FLAT screen, where the
-  -- view model should have taken over
-  V.require("HordeGun").clear()
   zoom, heightOff = 1, 0
   fpYawOff, snapArmed = 0, true
   camMode, fadeAlpha = "explore", 0
@@ -340,44 +335,9 @@ local function renderWorld(views, ctl)
       if scr then
         Pokedex.screen(scr[1], scr[2], scr[3], scr[4], scr[5])
       end
-    elseif V.require("Horde").active then
-      -- HORDE MODE's readout, on the device already in the player's left
-      -- hand. It cannot be a flat overlay: the eye buffers have
-      -- ASYMMETRIC frusta, so the same canvas pixel is a different ANGLE
-      -- in each eye and a 2D HUD drawn into both tears down the middle.
-      -- The Pokedex is real geometry both eyes see from their own
-      -- position, so the stereo is correct by construction -- and it is
-      -- already tracked, already lit, and already the thing this mod
-      -- puts information on. (The gun wore it briefly and that was
-      -- worse: a screen on the slide sits exactly where the iron sights
-      -- need to be looked through.)
-      --
-      -- The UV rect goes over the usual way up: v = 0 at the TOP, which
-      -- is how the device's screen quad reads every other texture it
-      -- wears. An inverted rect was tried first, on the theory that a
-      -- self-drawn canvas samples from the bottom -- it does not here,
-      -- and it stood the readout on its head.
-      local tex = V.require("HordeHud").panelTexture()
-      if tex then Pokedex.screen(tex, 0, 0, 1, 1) end
     end
   else
     Pokedex.clear()
-  end
-
-  -- and the horde's gun on the tracked RIGHT hand, under the same
-  -- mapping. The AIM pose where the runtime offers one -- the barrel
-  -- should point where the player is pointing, not along their wrist --
-  -- and the grip pose as the fallback. Placed here rather than in the
-  -- draw because the shot is traced down the model's own axis, so the
-  -- matrix has to exist before anything can be hit with it.
-  do
-    local HordeGun = V.require("HordeGun")
-    local right = ctl and (ctl.aimr or ctl.handr) or nil
-    if right and fp and not battle and V.require("Horde").active then
-      HordeGun.place(right, pivot, anchor, scale, mountYaw)
-    else
-      HordeGun.clear()
-    end
   end
 
   local eyes = {}
@@ -568,25 +528,9 @@ local function driveControls(ctl, dt, fp)
   if not (ok and Game.input) then return end
   local inp = Game.input
 
-  -- HORDE MODE re-reads the right hand as a weapon: the trigger fires
-  -- (its own OpenXR action, suggested alongside START on the same input
-  -- -- see VRXR.setupInput), and B reloads. START is dropped rather than
-  -- forwarded, because the mode does not pause. Everything else -- the
-  -- stick's walk, the snap turn, A -- keeps working, so the player can
-  -- still move and look while they are being chased.
-  local Horde = V.require("Horde")
-  if Horde.playing() then
-    local Gun = V.require("HordeGun")
-    if ctl.fireChanged and ctl.fire then Gun.fire() end
-    if ctl.bChanged and ctl.b then Gun.reload() end
-    setGB(inp, "a", ctl.a)
-    setGB(inp, "b", false)
-    setGB(inp, "start", false)
-  else
-    setGB(inp, "a", ctl.a)
-    setGB(inp, "b", ctl.b)
-    setGB(inp, "start", ctl.start)
-  end
+  setGB(inp, "a", ctl.a)
+  setGB(inp, "b", ctl.b)
+  setGB(inp, "start", ctl.start)
 
   -- the left stick, through the engine's OWN stick handler: it quantises
   -- to the grid d-pad for the diorama, and FirstPerson.moveVector reads
@@ -595,11 +539,8 @@ local function driveControls(ctl, dt, fp)
   inp:gamepadaxis(nil, "leftx", ctl.moveX or 0)
   inp:gamepadaxis(nil, "lefty", -(ctl.moveY or 0))
 
-  -- the left stick click: the VOXEL ladder ordinarily, and the way out of
-  -- horde mode while it runs (the rung is locked there, so the click has
-  -- nothing else to do, and a headset has no ESCAPE key)
   if ctl.toggleChanged and ctl.toggle then
-    if Horde.active then Horde.askExit() else VR.stepView() end
+    VR.stepView()
   end
 
   -- first person's turn on the right stick. SMOOTH TURN ON makes it a
@@ -778,8 +719,6 @@ function VR.invalidate()
   if dexCanvas and dexCanvas.release then pcall(dexCanvas.release, dexCanvas) end
   dexCanvas = nil
   Pokedex.invalidate()
-  V.require("HordeGun").invalidate()
-  V.require("HordeHud").invalidate()
   for k in pairs(fboCache) do fboCache[k] = nil end
 end
 
