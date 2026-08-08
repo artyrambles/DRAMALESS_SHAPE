@@ -17,11 +17,7 @@ Draws the overworld as a 3D diorama. Fork with edits by Stahltier among others (
 > sit **beside** the original without overwriting it.
 
 A mod for the [Pokémon Gen 1 Recompilation
-Project](https://github.com/bryanthaboi/gen1recomp). The overworld becomes a
-3D diorama: terrain extruded into real geometry, cast shadows that stretch
-through the afternoon, a six-phase day/night cycle with a painted sky and
-stars, weather that leaves puddles and snow on the ground, and wild PokÃ©mon
-standing in the grass where you can see them.
+Project](https://github.com/bryanthaboi/gen1recomp).
 
 > **This is a fan-made modification. It is not a game, and it contains no part
 > of any Nintendo product.** Please read [Legal](#legal) before anything else.
@@ -96,20 +92,24 @@ What that means in practice:
 
 ## What the fork(s) is/are based on
 
-The base is Dramatic Shape's **1.6.2**: the voxel diorama, the depth-buffered
+The base is Dramatic Shape's **1.6.1**: the voxel diorama, the depth-buffered
 occlusion, the leaning sprite slabs, the shadow map, VR, AA, the tilt-shift 
 pass, the Stadium ROM compatibility, and the over-the-shoulder battles.
-All of that is his work, and it is the reason any of this exists.
 
 Terrarium uses Dramatic Shape 1.3.0 as its base. 
-My edits were based on 1.6.1 and carry the `.ST` version numbering. 
+DRAMALESS_SHAPE is based on v1.6.1. 
 Originally this mod was a fork of the 1.6.2 version of Dramatic Shape,
 but since the creator of that mod removed the MIT License from the 1.6.2
 version and onward specifically, all changes made between 1.6.1 and 1.6.2
-were manually removed by me from v1.6.3.ST of DRAMALESS_SHAPE and onward.
+were manually removed by me from v1.6.3 of DRAMALESS_SHAPE and onward.
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 ### Changes made by Stahltier (Dramaless Shape Code)
+- I set out to add my personal edits to this mod in the beginning.
+- That means I wanted to make changes to fit my aesthetic (for example hiding the VoxelGrid in battle too if it was turned off in the settings),
+  and that would improve performance especially on mobile devices or otherwise low-end hardware.
+- I didn't mean to make this a fully-fledged independent mod in the beginning but then a lot of stuff happened in the span of approximately three hours
+  so here we are!
 - See CHANGELOG for a full list!
 
 ### It runs on weak hardware (Terrarium Code)
