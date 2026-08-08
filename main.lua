@@ -443,11 +443,11 @@ local SETTINGS = {
     .. "shadows, the sky and the light following -- or SYNC it to the "
     .. "clock on the wall, so Kanto's evening falls when yours does." },
     -- ------- 1.66 UI backplates (see lib/UiBackplates.lua) -------
-    { UiBackplates.spriteLight,
-      "SHADED lets the mons receive the world's day tint and cast shadows; "
-      .. "UNLIT draws them flat and full bright. UNLIT is what the white "
-      .. "arena fill needs, and what the OG battle's sprites look like.",
-      when = function() return stagedBattles() end, full = true },
+    -- { UiBackplates.spriteLight,
+    --   "SHADED lets the mons receive the world's day tint and cast shadows; "
+    --   .. "UNLIT draws them flat and full bright. UNLIT is what the white "
+    --   .. "arena fill needs, and what the OG battle's sprites look like.",
+    --   when = function() return stagedBattles() end, full = true },
     { UiBackplates.arenaFill,
       "WHITE draws a solid white layer in front of the whole voxel world, "
       .. "with only the mons, their attack animations and the menus above it "
