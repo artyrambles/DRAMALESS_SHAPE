@@ -54,7 +54,7 @@ StadiumInstall.MARKER = StadiumInstall.DIR .. "/pack.info"
 
 -- Bumped whenever the .dsm format changes, so an old cache is rebuilt rather
 -- than misread. Must track StadiumPack's magic.
-StadiumInstall.FORMAT = "DSM3"
+StadiumInstall.FORMAT = "DSM4"
 
 -- Bumped when the packs' CONTENT changes without the byte layout moving, so
 -- a cache built by an older extractor is rebuilt rather than trusted. Rev 2
@@ -279,7 +279,7 @@ function StadiumInstall.beginFrom(bytes, label)
   -- indistinguishable from a finished one further down: `job.total` is
   -- clamped to the count, `step` completes on the first call with nothing
   -- attempted and therefore nothing FAILED, and the marker gets written
-  -- saying `DSM3 0`.
+  -- saying the current format has zero models.
   --
   -- On a fresh machine that is merely a lie on the loading screen -- READY,
   -- with no models. On one that already HAD them it is worse: the marker is

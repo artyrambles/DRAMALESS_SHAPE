@@ -507,6 +507,7 @@ function StadiumBuild.pack(data, species, moveRows, ctx)
   local w = newWriter()
   local bones, prims = data.bones, data.prims
   local textures, anims, aux = data.textures, data.anims, data.auxAnims
+  local attachments = data.attachments or {}
 
   local height, floorY, radius = stance(data)
 
@@ -514,13 +515,14 @@ function StadiumBuild.pack(data, species, moveRows, ctx)
   local idle = (idleIndex ~= NONE16) and anims[idleIndex + 1] or nil
   local static = idleIsBroken(data, idle)
 
-  w:raw("DSM3")
+  w:raw("DSM4")
   w:u16(species)
   w:u16(#bones)
   w:u16(#prims)
   w:u16(#textures)
   w:u16(#anims)
   w:u16(#aux)
+  w:u16(#attachments)
   w:f32(data.rootScale[1])
   -- 1 = hold the bind pose, never play an animation
   w:u8(static and 1 or 0)
@@ -544,6 +546,15 @@ function StadiumBuild.pack(data, species, moveRows, ctx)
     for k = 1, 3 do w:i16(roundHalfEven(b.t[k])) end
     for k = 1, 3 do w:i16(b.r[k]) end
     for k = 1, 3 do w:i32(fixed(b.s[k])) end
+  end
+
+  -- Geo command 0x24 registers a tag at the current animated bone origin.
+  -- Both values stay signed because -1 is the extractor's "outside a bone"
+  -- sentinel; such a record is preserved for oracle parity and ignored by
+  -- the runtime lookup.
+  for i = 1, #attachments do
+    w:i16(attachments[i].bone)
+    w:i16(attachments[i].tag)
   end
 
   for i = 1, #prims do
