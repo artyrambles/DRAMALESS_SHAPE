@@ -527,6 +527,29 @@ function Stadium.animOf(side)
   return mon and mon.state or nil
 end
 
+-- Request Stadium's skeletal defender reaction on the live model owned by
+-- this module. Companion mods know when their visual reaches the target, but
+-- must not reach into the private session or duplicate the model renderer.
+--
+-- `side` is "player" or "enemy". `effectiveness` is "resisted", "neutral",
+-- or "super"; Stadium's native x10 numeric multipliers are accepted too.
+-- Stadium uses context slot 168 (the pack's entrance/recovery slot) for
+-- neutral and super-effective damage, and leaves resisted hits in idle.
+function Stadium.hit(side, effectiveness)
+  if side ~= "player" and side ~= "enemy" then return false end
+  local mon = session and session[side]
+  if not (mon and mon.rig and mon.visible) then return false end
+
+  local value = tonumber(effectiveness)
+  local resisted = effectiveness == "resisted" or (value and value < 10)
+  local known = effectiveness == nil or effectiveness == "resisted"
+                or effectiveness == "neutral" or effectiveness == "super"
+                or value ~= nil
+  if not known then return false end
+  if resisted then return true end
+  return mon:request("hit") and true or false
+end
+
 -- Whether this side's model is actually being drawn this frame. Named for
 -- the shot drivers alongside animOf: "how long does it stay" is a span, and
 -- a screenshot taken at one moment has no span in it.
@@ -609,11 +632,10 @@ function Stadium.install()
     return innerMove(self, user, target, moveInst, isCalled)
   end
 
-  -- THE HIT is deliberately NOT hooked. There is no damage reaction in this
-  -- set to play -- what looked like one is the species' default attack (see
-  -- StadiumMon's STATES), which is why being hit used to look like swinging.
-  -- The engine's own flash, pic blink and bar drain are what say "that hurt",
-  -- and they are already in the frame.
+  -- THE HIT is deliberately not hooked here. Companion effect renderers know
+  -- their own exact impact frame and call the public Stadium.hit API then;
+  -- hooking applyDamage would start the reaction while the battle queue was
+  -- still being constructed, before the attack animation even began.
 
   -- THE FAINT. Held on its last frame rather than looped (see StadiumMon's
   -- STATES), because a Pokemon that collapses and then stands back up
