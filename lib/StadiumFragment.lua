@@ -256,6 +256,7 @@ local function newModel(frag)
     primsByKey = {},
     rootScale = { 1.0, 1.0, 1.0 },
     fx = {},                -- geo cmd 0x08 procedural effect nodes
+    attachments = {},       -- geo position tags, in traversal order
     warnings = {},
   }, Model)
   return m
@@ -360,6 +361,13 @@ function Model:walk(o, depth)
       end
       self.vtxBase = f:ptr(o + 0x10)
       self.nVerts = f:s16(o + 6)
+    elseif cmd == 0x18 then                           -- shadow/default origin
+      -- The shadow graph node registers tag 0x64 at the current matrix when
+      -- the model has not registered one yet (func_80014D70). It is also the
+      -- battle effect system's general attachment fallback.
+      self.attachments[#self.attachments + 1] = {
+        bone = self:curBone(), tag = 0x64,
+      }
     elseif cmd == 0x08 then                           -- effect callback
       self.fx[#self.fx + 1] = { bone = self:curBone(), callback = f:u32(o + 4),
                                 arg = f:ptr(o + 8) }
@@ -386,6 +394,14 @@ function Model:walk(o, depth)
       -- func_800176DC swaps this material's texture per frame out of the
       -- auxiliary animation's stream.
       self.curTexAnim = f:s16(o + 2)
+    elseif cmd == 0x24 then                           -- effect attachment tag
+      -- At draw time the original graph node records the current matrix's
+      -- origin under this id (func_80014D24 -> func_80014CB8). Keeping the
+      -- bone that owns that matrix is enough for StadiumRig to reproduce the
+      -- same moving point from its already-computed pose.
+      self.attachments[#self.attachments + 1] = {
+        bone = self:curBone(), tag = f:s16(o + 2),
+      }
     elseif cmd == 0x22 then                           -- DL on current bone
       self:runDL(f:ptr(o + 4), self:curBone(), 0)
     elseif cmd == 0x1E then                           -- DL on named bone
@@ -1037,6 +1053,7 @@ function StadiumFragment.extract(data, name)
     anims = anims,
     auxAnims = auxOut,
     fx = dedupeFx(m.fx),
+    attachments = m.attachments,
     warnings = m.warnings,
   }
 end

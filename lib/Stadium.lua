@@ -555,6 +555,55 @@ function Stadium.footprint(side)
   return (r > 0) and r or nil
 end
 
+-- The current animated position of one of Stadium's geo-layout attachment
+-- tags, projected into the same live GB-coordinate space as
+-- OverworldBattle.shot(). This deliberately exposes coordinates, not the
+-- private model, rig, matrices or session that produced them.
+--
+-- Native lookup rules (fragment 62's func_8432FA54): the conventional 0x64
+-- request prefers tag 0x0A and then 0x64; another request tries itself and
+-- then 0x64. nil lets a companion retain its ordinary body-anchor fallback.
+function Stadium.attachment(side, tag)
+  if side ~= "player" and side ~= "enemy" then return nil end
+  tag = tonumber(tag)
+  if not tag then return nil end
+  tag = math.floor(tag)
+
+  local mon = session and session[side]
+  if not (mon and mon.visible and mon.model and mon.rig and mon.model_matrix) then
+    return nil
+  end
+  local attachments = mon.model.attachments
+  if not attachments then return nil end
+
+  local wanted = (tag == 0x64) and { 0x0A, 0x64 } or { tag, 0x64 }
+  local record
+  for _, candidate in ipairs(wanted) do
+    for i = 1, #attachments do
+      if attachments[i].tag == candidate then
+        record = attachments[i]
+        break
+      end
+    end
+    if record then break end
+  end
+  if not record then return nil end
+
+  local x, y, z = mon.rig:attachment(record.bone)
+  if not x then return nil end
+  local m = mon.model_matrix
+  local wx = m[1] * x + m[2] * y + m[3] * z + m[4]
+  local wy = m[5] * x + m[6] * y + m[7] * z + m[8]
+  local wz = m[9] * x + m[10] * y + m[11] * z + m[12]
+
+  local OverworldBattle = V.require("OverworldBattle")
+  local shot = OverworldBattle.shot()
+  if not (shot and shot.vp and shot.scale and shot.scale > 0) then return nil end
+  local BattleScene = V.require("BattleScene")
+  return BattleScene.toGB(shot.vp, wx, wy, wz, shot.lx, shot.ly,
+                          shot.scale, shot.pw, shot.ph)
+end
+
 -- Whether anything at all is standing this frame -- what the shadow
 -- signature keys on alongside the pics' own token.
 function Stadium.standing()
