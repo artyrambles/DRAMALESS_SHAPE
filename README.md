@@ -144,6 +144,14 @@ much world is actually in view.
   obviously also not included here, but I tried to make the install process
   easier and smoother.
 
+### Stadium companion API
+
+Companion effect mods can request a defender reaction on the currently drawn
+model with `Stadium.hit(side, effectiveness)`. `side` is `"player"` or
+`"enemy"`; effectiveness is `"resisted"`, `"neutral"`, or `"super"`. The
+function returns false when no live model can accept the request and never
+exposes the private Stadium session.
+
 ## Installing
 
 Drop the unzipped folder into your Gen1Recomp `mods/` directory, or import the 

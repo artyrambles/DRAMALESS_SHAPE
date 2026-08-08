@@ -142,7 +142,7 @@ StadiumMon.TRAVEL = 0.75
 --
 -- Each entry says which context slot to look up, whether it loops, and
 -- what it falls back to when the species has no animation in that slot.
--- ------- there is no hit reaction, and there never was
+-- ------- the defender reaction
 --
 -- This used to carry `hit` and `flinch` states, played when damage landed,
 -- resolving through context slots 166 and 178. Both were wrong, and the data
@@ -156,17 +156,15 @@ StadiumMon.TRAVEL = 0.75
 -- species' DEFAULT ATTACK, not a flinch, which is why being hit looked like
 -- swinging: it literally was the swing.
 --
--- Nor is the reaction hiding elsewhere. Exactly one animation per species is
--- claimed by no slot and no move, and it is the same length as the idle for
--- essentially every one of them -- 48/48, 56/56, 60/60, 84/84 -- so it is a
--- second standby loop, not a recoil. The set has no damage reaction in it.
---
--- So damage plays nothing, and the Pokemon carries on with what it was doing.
--- That is not a gap: the engine flashes the screen, blinks the pic and drains
--- the bar, which is how Gen 1 says "that hurt" and is already in the frame.
+-- Stadium's defender-impact handler instead requests context slot 168 for
+-- ordinary and super-effective damage. That slot is also used for entrance:
+-- Stadium deliberately reuses the same species-specific recovery motion in
+-- both contexts. Resisted damage selects idle and is filtered by Stadium.hit
+-- before it reaches this state machine.
 local STATES = {
   idle = { slot = "idle", loop = true },
   entrance = { slot = "entrance", loop = false, next = "idle" },
+  hit = { slot = "entrance", loop = false, next = "idle" },
   faint = { slot = "faint", loop = false, hold = true },
   -- A move names its own animation out of the move table. `attack_default`
   -- is the fallback for one the table has nothing for -- which is what slot
@@ -286,7 +284,7 @@ end
 -- Ask for a state, but never interrupt one that outranks it. A faint is
 -- final, and an entrance cannot be cut short by the standby loop it hands
 -- on to.
-local RANK = { idle = 0, entrance = 1, attack = 2, faint = 3 }
+local RANK = { idle = 0, entrance = 1, attack = 2, hit = 2, faint = 3 }
 
 function StadiumMon:request(state, animIndex, auxIndex)
   if not self.model then return false end

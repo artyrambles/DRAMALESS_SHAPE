@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added `Stadium.hit(side, effectiveness)`, a safe public API for companion
+  effect mods to request Stadium's real skeletal defender reaction at their
+  exact impact frame without accessing the private model session.
+
 ## 1.6.2.ST
 - Created the fork. This is the edited version of the mod, edits made by Stahltier.
 - edited StadiumInstall.lua to use a different ROM path
