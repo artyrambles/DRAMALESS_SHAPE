@@ -183,6 +183,7 @@ local function readHeader(s, p, model)
   model.texCount, p = u16(s, p)
   model.animCount, p = u16(s, p)
   model.auxCount, p = u16(s, p)
+  model.attachmentCount, p = u16(s, p)
   model.rootScale, p = f32(s, p)
   -- a species whose standby loop is corrupt in the source extraction, and
   -- which the mod therefore holds at its bind pose (see the packer's
@@ -199,6 +200,20 @@ local function readHeader(s, p, model)
   for i = 1, StadiumPack.N_MOVES do moveAux[i], p = i16(s, p) end
   for i = 1, #StadiumPack.CONTEXT do ctx[i], p = u16(s, p) end
   model.moveAnim, model.moveAux, model.ctx = moveAnim, moveAux, ctx
+  return p
+end
+
+-- Attachment tags are kept in graph traversal order because Stadium's own
+-- func_80015390 returns the first matching registration.
+local function readAttachments(s, p, model)
+  local out = {}
+  for i = 1, model.attachmentCount do
+    local bone, tag
+    bone, p = i16(s, p)
+    tag, p = i16(s, p)
+    out[i] = { bone = bone + 1, tag = tag }
+  end
+  model.attachments = out
   return p
 end
 
@@ -548,13 +563,14 @@ function StadiumPack.load(species)
   end
 
   local ok, model = pcall(function()
-    if bytes:sub(1, 4) ~= "DSM3" then
-      error("not a DSM3 pack -- delete it and let the mod rebuild it", 0)
+    if bytes:sub(1, 4) ~= "DSM4" then
+      error("not a DSM4 pack -- delete it and let the mod rebuild it", 0)
     end
     local m = { bytes = bytes }
     local p = 5
     p = readHeader(bytes, p, m)
     p = readBones(bytes, p, m)
+    p = readAttachments(bytes, p, m)
     p = readPrims(bytes, p, m)
     p = readTextures(bytes, p, m)
     p = readAnims(bytes, p, m)

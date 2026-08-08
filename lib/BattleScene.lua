@@ -750,6 +750,10 @@ function BattleScene.render(state, arena, textures, token)
     if not (pl and pr and el and er) then return end
     out = {
       canvas = canvas,
+      -- Retain the exact projection used for this shot so read-only
+      -- companion queries can project animated model attachment points after
+      -- the 3D pass has ended, without consulting mutable camera globals.
+      vp = vp,
       player = { pmx, pmy },
       enemy = { emx, emy },
       playerSpan = math.abs(pr - pl),

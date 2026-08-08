@@ -691,6 +691,20 @@ function StadiumRig:anchor(limit, dt)
   end
 end
 
+-- The animated model-space origin of one attachment's bone. Geo command
+-- 0x24 records the current matrix translation, and pivotM and drawM share
+-- exactly that translation; pivotM is used because it describes the graph
+-- node itself rather than its draw-only accumulated scale.
+function StadiumRig:attachment(bone)
+  if type(bone) ~= "number" or bone < 1 or bone > self.model.boneCount then
+    return nil
+  end
+  local o = (bone - 1) * 12
+  local p = self.pivotM
+  if p[o + 4] == nil or p[o + 8] == nil or p[o + 12] == nil then return nil end
+  return p[o + 4], p[o + 8], p[o + 12]
+end
+
 -- ------- the skin
 --
 -- Every vertex through its one bone's draw matrix, and its normal through

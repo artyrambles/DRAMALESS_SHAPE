@@ -89,6 +89,7 @@ class Model:
         self.vtxBase = None
         self.rootScale = [1.0, 1.0, 1.0]
         self.fx = []            # geo cmd 0x08 procedural effect nodes
+        self.attachments = []   # geo position tags, traversal order
         self.warnings = []
 
     # ---- textures -------------------------------------------------------
@@ -166,6 +167,10 @@ class Model:
                     self.read_tlut_table(f.ptr(o + 0xC), f.s16(o + 4))
                 self.vtxBase = f.ptr(o + 0x10)
                 self.nVerts = f.s16(o + 6)
+            elif cmd == 0x18:                           # shadow/default origin
+                # func_80014D70 registers 0x64 at this current matrix if no
+                # earlier node has done so. It is the battle VFX fallback.
+                self.attachments.append(dict(bone=self.curBone(), tag=0x64))
             elif cmd == 0x08:                           # procedural effect callback
                 self.fx.append(dict(bone=self.curBone(), callback=f.u32(o + 4),
                                     arg=f.ptr(o + 8)))
@@ -191,6 +196,8 @@ class Model:
                 # func_800176DC swaps this material's texture per frame from the
                 # auxiliary animation's channel stream.
                 self.curTexAnim = f.s16(o + 2)
+            elif cmd == 0x24:                           # effect attachment tag
+                self.attachments.append(dict(bone=self.curBone(), tag=f.s16(o + 2)))
             elif cmd == 0x22:                           # display list on current bone
                 self.run_dl(f.ptr(o + 4), self.curBone())
             elif cmd == 0x1E:                           # display list on named bone
@@ -706,6 +713,7 @@ def extract(path, name=None, raw=False):
         anims=anims,
         auxAnims=auxOut,
         fx=dedupe_fx(m.fx),
+        attachments=m.attachments,
         warnings=m.warnings,
     )
 
