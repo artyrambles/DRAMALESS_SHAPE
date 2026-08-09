@@ -1043,12 +1043,27 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- Draw silhouettes for objects hidden behind voxel geometry.
   -- This must happen BEFORE the solid character pass so the ghost depth
   -- test only sees terrain/buildings/trees and not the characters themselves.
-for _, p in ipairs(posed) do
-  if not (p.isPlayer and FirstPerson.hidePlayer()) then
-    Voxel3D.beginGhost()
-    drawGhost(p)
-    Voxel3D.endGhost()
+  -- fyi world tiles use 32 pixels per map cell, and this determines if a silhouette
+  -- is drawn based on how far an object is from the player. So 10 would be 320 pixels,
+VoxelScene.GHOST_RADIUS_CELLS = 15
+
+local ghostRadius = VoxelScene.GHOST_RADIUS_CELLS * 32
+local ghostRadiusSq = ghostRadius * ghostRadius
+if me and not FirstPerson.hidePlayer() then
+  Voxel3D.beginGhost()
+
+  for _, p in ipairs(posed) do
+    if not (p.isPlayer and FirstPerson.hidePlayer()) then
+      local dx = p.px - me.px
+      local dy = p.py - me.py
+
+      if dx * dx + dy * dy <= ghostRadiusSq then
+        drawGhost(p)
+      end
+    end
   end
+
+  Voxel3D.endGhost()
 end
 
   -- Characters carry no wireframe out here, whatever the V-GRID row says.
