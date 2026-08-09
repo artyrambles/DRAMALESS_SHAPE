@@ -29,6 +29,7 @@ local BattleBillboard = V.require("BattleBillboard")
 local Pokedex = V.require("Pokedex")
 local PaletteFX = require("src.render.PaletteFX")
 local Map = require("src.world.Map")
+local Quality = V.require("Quality")
 
 local VoxelScene = {}
 
@@ -987,14 +988,14 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- against the terrain just drawn (a shadow behind a building stays
   -- hidden) but never depth-writing, so the grass pass at the end of the
   -- frame still wins its feet-overdraw fights.
-  if not Voxel3D.shadowsActive() then
-    Voxel3D.beginShadows()
-    for _, p in ipairs(posed) do
-      drawShadow(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
-                 p.lift)
-    end
-    Voxel3D.endShadows()
+if not Voxel3D.shadowsActive() and not Quality.shadowsOff() then
+  Voxel3D.beginShadows()
+  for _, p in ipairs(posed) do
+    drawShadow(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
+               p.lift)
   end
+  Voxel3D.endShadows()
+end
 
   -- and the water over the top of it, reflecting everything just drawn plus
   -- the sky the frame opened with (see drawWater).
