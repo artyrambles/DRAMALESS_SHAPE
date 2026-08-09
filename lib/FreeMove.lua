@@ -258,11 +258,13 @@ function FreeMove.tick(state)
   -- gets the CONTINUOUS bearing behind that compass point.
   p.facing = FirstPerson.pointBody(0, 0)
 
-  if input:wasPressed("a") then
+  local suppressed = false
+
+  if not suppressed and input:wasPressed("a") then
     state:interact()
     return
   end
-  if not input:wasPressed("start") then
+  if not suppressed and input:wasPressed("start") then
     require("src.core.Sound").play(Game.data, "Start_Menu")
     require("src.ui.Screens").push(Game, "StartMenu")
     return

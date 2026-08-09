@@ -177,8 +177,10 @@ BattleCam.PITCH_MOUSE = 0.0016
 -- because the rig derives its field of view from frameH and the distance
 -- together -- so moving the eye alone changes the perspective and not the
 -- framing, which is exactly what the dolly breath above is for.
-BattleCam.ZOOM_MIN = 0.45         -- the pair filling the frame
-BattleCam.ZOOM_MAX = 2.0          -- the fight in its own landscape
+-- Stahls' NOTE: tweaked these values again so you're no longer looking up charmander's nose into its brain by default. the void up there was visible.
+-- looks like I accidentally reverted these changes when migrating to a proper standalone repo.
+BattleCam.ZOOM_MIN = 1.45         -- the pair filling the frame
+BattleCam.ZOOM_MAX = 3.0          -- the fight in its own landscape
 BattleCam.ZOOM_STEP = 1.15
 BattleCam.ZOOM_TIME = 0.18
 
