@@ -31,8 +31,8 @@ local UiBackplates = {}
 
 -- ------- C) SPRITE LIGHT -------
 
--- UiBackplates.spriteLight = ModSetting.new("spriteLight", "SPRITE LIGHT",
---   { "SHADED", "UNLIT" }, { "SHADED", "UNLIT" })
+ UiBackplates.spriteLight = ModSetting.new("spriteLight", "SPRITE LIGHT",
+   { "SHADED", "UNLIT" }, { "SHADED", "UNLIT" })
 
 -- Whether the mon cards should be drawn flat and full bright (UNLIT) rather
 -- than receiving the world's day tint and shadows (SHADED). ARENA FILL: WHITE

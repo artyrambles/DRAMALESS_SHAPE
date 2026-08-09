@@ -1,6 +1,10 @@
 # Changelog
 
 ## 1.6.4
+- Fixed camera control issues; hotkeys Q and E are no longer claimed by this
+  mod, and the minimum and maximum battle-camera zoom distances were increased.
+- Removed the incomplete BackPlatesUI integration and Horde mode, which could
+  softlock first- and third-person modes.
 - Added a public, versioned battle-presentation API for every companion mod.
   The four existing 2D-3D/STADIUM A/B choices remain the baselines and retain
   their old stored values.

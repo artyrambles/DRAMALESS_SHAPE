@@ -40,6 +40,16 @@ local mod = ...
 
 local V = { mod = mod, path = mod.path }
 
+local KEY_VOXEL  = "v"   -- VOXEL camera ladder (skips FULL)
+local KEY_GRID   = "g"   -- V-GRID wireframe
+local KEY_TILT   = "t"   -- T-SHIFT blur
+local KEY_CURVE  = "c"   -- V-CURVE horizon
+local KEY_BATTLE = "b"   -- 3D-BTL
+V.KEYS = {
+  voxel = KEY_VOXEL, grid = KEY_GRID, tilt = KEY_TILT,
+  curve = KEY_CURVE, battle = KEY_BATTLE
+}
+
 local function chunkFor(rel)
   local source = mod:read(rel)
   if not source then
@@ -90,8 +100,8 @@ local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
 local CamControl = V.require("CamControl")
 local Quality = V.require("Quality")
-local UiBackplates = V.require("UiBackplates") -- from BATTLE ART
 local VR = V.require("VR")
+local Horde = V.require("Horde")
 
 -- Forward declaration: the voxel pipeline's update hook (registered below)
 -- calls this, and it is defined further down with the settings it drives.
@@ -142,7 +152,8 @@ mod.content.render_pipelines:register("voxel", {
   levels = Voxel.ANGLE_LABELS,
   -- 3 is the engine's TILT key, which this mode supersedes -- see the
   -- hotkey block near the bottom of this file for how it is claimed
-  hotkey = "3",
+  -- UPDATE by Stahl: made these keybinds variables. no magic strings allowed in my house.
+  hotkey = KEY_VOXEL,
   -- above tiltshift, so the two sort together in the options list with the
   -- mode first and its post-process under it
   priority = 20,
@@ -203,6 +214,7 @@ mod.content.render_pipelines:register("voxel", {
     pcall(function()
       V.require("StadiumRomPick").poll(require("src.core.Game"))
     end)
+    Horde.update(dt)
     -- VOID FILL picks the block the border ring is made of, and in this
     -- mode that ring is BAKED INTO THE MESH rather than drawn each frame.
     -- So the option has to reach the cache or nothing happens on screen
@@ -293,7 +305,7 @@ mod.content.render_pipelines:register("tiltshift", {
   levels = TiltShift.LABELS,
   -- 6 is free: no engine branch claims it, so this one alone reaches the
   -- registry by the documented route
-  hotkey = "6",
+  hotkey = KEY_TILT,
   priority = 10,
 
   update = function(dt, level)
@@ -436,6 +448,7 @@ local SETTINGS = {
   -- Only offered while a fight can actually be staged on the map: with 3D-BTL
   -- off the engine draws the classic screen, which is this row's ON already,
   -- and a row that no longer decides anything is worse than no row.
+  -- Stahl's NOTE to self: this is the perfect spot for checking if 3D-BTL is on one of the stadium modes. need to check if there is a scope-accessible check for this already, otherwise I'll just make my own I guess
   { OverworldBattle.backSetting,
     "Keep your own Pokemon on the battle menu, seen from behind in its "
     .. "original slot, instead of standing it on the map facing the foe. "
@@ -453,13 +466,13 @@ local SETTINGS = {
     --   .. "UNLIT draws them flat and full bright. UNLIT is what the white "
     --   .. "arena fill needs, and what the OG battle's sprites look like.",
     --   when = function() return stagedBattles() end, full = true },
-    { UiBackplates.arenaFill,
-      "WHITE draws a solid white layer in front of the whole voxel world, "
-      .. "with only the mons, their attack animations and the menus above it "
-      .. "-- the step between the OG battle and the full 3D one. Forces SPRITE "
-      .. "LIGHT: UNLIT so the sprites stay flat and true-colour with no night "
-      .. "tint (as in the traditional games).",
-      when = function() return stagedBattles() end, full = true },
+    -- { UiBackplates.arenaFill,
+    --   "WHITE draws a solid white layer in front of the whole voxel world, "
+    --   .. "with only the mons, their attack animations and the menus above it "
+    --   .. "-- the step between the OG battle and the full 3D one. Forces SPRITE "
+    --   .. "LIGHT: UNLIT so the sprites stay flat and true-colour with no night "
+    --   .. "tint (as in the traditional games).",
+    --   when = function() return stagedBattles() end, full = true },
     -- The battle box is ALWAYS an opaque white panel with black ink (see
     -- BattleState:drawTextArea), so TEXTBOX FILL was dropped -- no option row.
     -- Marked `full` for the opposite reason the battle rows are: this is not a
@@ -554,14 +567,14 @@ mod.options:define(schema)
 
 -- ------- this mod's hotkeys
 --
---   3  VOXEL    cycle the camera ladder      (was 6; skips FULL)
---   5  V-GRID   toggle the wireframe         (new)
---   6  T-SHIFT  cycle the blur ladder        (was 9)
---   7  V-CURVE  cycle the horizon bend       (new)
---   8  3D-BTL   cycle overworld battles      (new)
---   9  WATER    cycle the water reflections  (new; 9 was T-SHIFT's old key)
+--   V  VOXEL    cycle the camera ladder      (was 6; skips FULL)
+--   G  V-GRID   toggle the wireframe         (new)
+--   T  T-SHIFT  cycle the blur ladder        (was 9)
+--   C  V-CURVE  cycle the horizon bend       (new)
+--   B  3D-BTL   cycle overworld battles      (new)
+--   (wip)  WATER    cycle the water reflections  (not properly implemented yet)
 --
--- Only 6 arrives by the documented route. Game:keypressed answers the
+-- Only V arrives by the documented route. Game:keypressed answers the
 -- engine's own display keys FIRST and returns -- 2 COLORS, 3 TILT, 4 ZOOM,
 -- 5 GBC FX -- and only then offers the key to Pipelines.hotkey, expressly
 -- so "a pipeline can never shadow one" (Schemas, render_pipelines.hotkey).
@@ -586,13 +599,22 @@ mod.options:define(schema)
 -- applies its own gate and ladder, and the three lines after it are the
 -- engine's own (syncOptions, the tilt exclusion, writeOptions).
 
+-- local HOTKEYS = {
+--   ["3"] = "pipeline",           -- voxel, by its declared hotkey
+--   ["6"] = "pipeline",           -- tiltshift, likewise
+--   ["5"] = VoxelGrid.setting,
+--   ["7"] = WorldCurve.setting,
+--   ["8"] = OverworldBattle.setting,
+--   ["9"] = Water.setting,
+-- }
+
+-- hotkeys are now variable.
 local HOTKEYS = {
-  ["3"] = "pipeline",           -- voxel, by its declared hotkey
-  ["6"] = "pipeline",           -- tiltshift, likewise
-  ["5"] = VoxelGrid.setting,
-  ["7"] = WorldCurve.setting,
-  ["8"] = OverworldBattle.setting,
-  ["9"] = Water.setting,
+  [KEY_VOXEL]  = "pipeline",
+  [KEY_TILT]   = "pipeline",
+  [KEY_GRID]   = VoxelGrid.setting,
+  [KEY_CURVE]  = WorldCurve.setting,
+  [KEY_BATTLE] = OverworldBattle.setting
 }
 
 -- One step of the VOXEL angle ladder: everything a "3" press does, named
@@ -605,23 +627,34 @@ local function cycleVoxel(game)
   if not Pipelines.canToggle("voxel", top, game.overworld) then return false end
   Pipelines.setLevel("voxel", Voxel.nextHotkeyLevel(Pipelines.level("voxel")))
   Pipelines.syncOptions(game.save.options)
-  -- 3 is the key that used to turn TILT on and sits next to the one that
-  -- used to turn GBC FX on, and this mod has taken both away. A player who
-  -- left either running before enabling the mod would otherwise have no
-  -- way back to off, and both fight the diorama -- so the VOXEL step
-  -- clears them on EVERY press, not just the press that switches on.
   game.save.options.tilt = 0
   game.save.options.gbcfx = 0
   require("src.render.GBCFX").setLevel(0)
   require("src.render.Tilt").setLevel(game.save.options.tilt or 0)
   game:writeOptions()
   return true
+
+  -- local top = game.stack and game.stack:top()
+  -- if not Pipelines.canToggle("voxel", top, game.overworld) then return false end
+  -- Pipelines.setLevel("voxel", Voxel.nextHotkeyLevel(Pipelines.level("voxel")))
+  -- Pipelines.syncOptions(game.save.options)
+  -- -- 3 is the key that used to turn TILT on and sits next to the one that
+  -- -- used to turn GBC FX on, and this mod has taken both away. A player who
+  -- -- left either running before enabling the mod would otherwise have no
+  -- -- way back to off, and both fight the diorama -- so the VOXEL step
+  -- -- clears them on EVERY press, not just the press that switches on.
+  -- game.save.options.tilt = 0
+  -- game.save.options.gbcfx = 0
+  -- require("src.render.GBCFX").setLevel(0)
+  -- require("src.render.Tilt").setLevel(game.save.options.tilt or 0)
+  -- game:writeOptions()
+  -- return true
 end
 
 -- The VR stick click makes this same step (VR.stepView): the function is
 -- a local of this file, so the handoff is explicit rather than a
 -- reimplementation drifting out of date in lib/VR.lua.
-VR.cycleVoxel = cycleVoxel
+--VR.cycleVoxel = cycleVoxel
 
 do
   local Game = require("src.core.Game")
@@ -631,28 +664,18 @@ do
   function Game:keypressed(key)
     local claim = HOTKEYS[key]
     local top = self.stack and self.stack:top()
-    -- Q and E work whichever camera is in front of the player -- the
-    -- battle's lens, the third-person boom, or the engine's own survey
-    -- zoom on an orbit rung. CamControl answers which, and answers "none"
-    -- for 1ST and for every screen with no camera of ours behind it, in
-    -- which case the key falls through untouched. Ahead of the hotkey
-    -- table because unlike those it is NOT free-roam only: a staged battle
-    -- is exactly where the zoom is most wanted.
-    if (key == "q" or key == "e")
-       and not (top and top.onKeyPressed) then
-      if CamControl.zoomBy(key == "q" and 1 or -1) then return end
-    end
+    -- there was code for "e" and "q" that mess with the zoom functionality here from DramaticShape v1.6.1, but I've removed it.
     -- A screen with its own key handler gets the key first, exactly as the
     -- engine's first branch does: typing a nickname must not toggle a
     -- render mode. Only free-roam presses are ours to take.
     if claim and not (top and top.onKeyPressed) then
       if claim == "pipeline" then
-        -- 3 walks the ANGLE rungs and steps over FULL (Voxel.HOTKEY_ORDER),
+        -- VOXEL key walks the ANGLE rungs and steps over FULL (Voxel.HOTKEY_ORDER),
         -- so the registry's plain "advance one and wrap" is not what it
         -- wants; 6 still is. The gate is the registry's own either way.
         -- The whole of 3's step lives in cycleVoxel, because the pad's
         -- SELECT button makes the same step (see the handleInput wrap).
-        if key == "3" then
+        if key == KEY_VOXEL then
           if cycleVoxel(self) then return end
         elseif Pipelines.hotkey(key, top, self.overworld) then
           Pipelines.syncOptions(self.save.options)
@@ -784,7 +807,7 @@ mod.hooks:wrap("ui.options.rows", function(next, game, rows)
   -- off the menu whatever else this mod is or is not doing
   pinEngineFx(game)
   dropRow(out, "tilt")
-  dropRow(out, "gbcfx")
+  dropRow(out, "gbcfx") -- Stahl's NOTE: why is this dropped? gonna test if it messes things up, otherwise there's no reason to take this option away from the player
   -- and BATTLE BG with them: this mode fills the window with the map, so
   -- the row's whole question -- what to put in the voids around the battle
   -- -- no longer has voids to be about (see pinEngineFx)
@@ -1040,9 +1063,11 @@ FreeMove.install()
 -- wrap installed later is the OUTER one, so a fight gets first refusal on
 -- the mouse and the fingers, which is right, because while one is staged
 -- the free-roam look is not driving.
+-- Stahl's NOTE: CamControl is for the battle mostly. with the hotkey behavior disabled it should play nicer now.
 CamControl.install()
 
 -- ------- SELECT walks the angle ladder
+-- no it doesn't anymore. checkmate atheists.
 --
 -- The same step the "3" key makes, on the pad's own button: a phone (and
 -- a controller) has no number row, and SELECT has no overworld job in
@@ -1058,22 +1083,25 @@ CamControl.install()
 -- OUTSIDE the free walk's, or first person -- where FreeMove.tick takes
 -- the frame and never calls further in -- would eat the button, and the
 -- one rung SELECT could not step off of would be 1ST itself.
-do
-  local OverworldState = require("src.world.OverworldController")
-  if not OverworldState.dramaticShapeSelectHook then
-    local inner = OverworldState.handleInput
-    function OverworldState:handleInput(...)
-      local Game = require("src.core.Game")
-      local input = Game.input
-      --if input and input.wasPressed and input:wasPressed("select") then
-        --if cycleVoxel(Game) then return end
-      --end
-      -- removed these for 1.6.3 
-      return inner(self, ...)
-    end
-    OverworldState.dramaticShapeSelectHook = true
-  end
-end
+-- do
+--   local OverworldState = require("src.world.OverworldController")
+--   if not OverworldState.dramaticShapeSelectHook then
+--     local inner = OverworldState.handleInput
+--     function OverworldState:handleInput(...)
+--       local Game = require("src.core.Game")
+--       local input = Game.input
+--       --if input and input.wasPressed and input:wasPressed("select") then
+--         --if cycleVoxel(Game) then return end
+--       --end
+--       -- removed these for 1.6.3 
+--       return inner(self, ...)
+--     end
+--     OverworldState.dramaticShapeSelectHook = true
+--   end
+-- end
+
+-- just kill me already
+--Horde.install()
 
 -- ------- edge-anchored menus stay in the GB frame while a headset is live
 --
