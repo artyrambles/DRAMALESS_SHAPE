@@ -1,12 +1,19 @@
 local loader = love and love.filesystem and love.filesystem.load or loadfile
 
 local mons = {}
+local stadiumProvider = {}
 local shot = {
   vp = {}, lx = 10, ly = 20, scale = 2, pw = 640, ph = 480,
 }
 local V = { require = function(name)
   if name == "Voxel3D" then return { available = function() return true end } end
   if name == "StadiumPack" then return {} end
+  if name == "BattlePresets" then
+    return {
+      component = function() return stadiumProvider end,
+      stadiumBattlers = function() return stadiumProvider end,
+    }
+  end
   if name == "OverworldBattle" then
     return {
       setting = { get = function() return "stadium" end },

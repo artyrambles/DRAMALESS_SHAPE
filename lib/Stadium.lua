@@ -82,16 +82,17 @@ end
 -- which is one message on the console rather than a row that silently
 -- refuses to move.
 function Stadium.selected()
-  return Stadium.mode() ~= nil
+  local OverworldBattle = V.require("OverworldBattle")
+  local BattlePresets = V.require("BattlePresets")
+  local provider = BattlePresets.component(OverworldBattle.setting:get(),
+                                            "battlers")
+  return provider == BattlePresets.stadiumBattlers()
 end
 
 -- "A", "B", or nil when the row is on neither stadium rung.
 function Stadium.mode()
-  local OverworldBattle = V.require("OverworldBattle")
-  local value = OverworldBattle.setting:get()
-  if value == Stadium.VALUE then return "A" end
-  if value == Stadium.VALUE_B then return "B" end
-  return nil
+  if not Stadium.selected() then return nil end
+  return V.require("OverworldBattle").discs() and "B" or "A"
 end
 
 -- Whether the fight is staged on the DISCS rather than on the map.

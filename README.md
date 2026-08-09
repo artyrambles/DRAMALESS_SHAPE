@@ -150,6 +150,15 @@ model with `Stadium.hit(side, effectiveness)`. `side` is `"player"` or
 function returns false when no live model can accept the request and never
 exposes the private Stadium session.
 
+### Battle preset API
+
+Companion mods can add equal-standing choices to **3D-BTL**, inherit any of the
+four built-in presets, and replace only the stage, battlers, camera, effects or
+other components they own. No manifest or numeric priority decides a winner;
+the player selects the preset and every omitted component follows its declared
+fallback. See [`BATTLE_PRESETS.md`](BATTLE_PRESETS.md) for the complete API,
+provider lifecycle and example.
+
 ## Installing
 
 Drop the unzipped folder into your Gen1Recomp `mods/` directory, or import the 
@@ -175,6 +184,7 @@ for anything else.
 | --- | --- |
 | [`CHANGELOG.md`](CHANGELOG.md) | thirty-one releases, with the reasoning for each |
 | [`STADIUM_ROM_GUIDE.md`](STADIUM_ROM_GUIDE.md) | info for installing Stadium models on mobile devices |
+| [`BATTLE_PRESETS.md`](BATTLE_PRESETS.md) | public API for composable companion-mod battle presets |
 | `lib/` | the mod itself |
 | `assets/` | contains a dll for VR mode |
 

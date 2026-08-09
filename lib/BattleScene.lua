@@ -49,6 +49,12 @@ local Map = require("src.world.Map")
 
 local BattleScene = {}
 
+-- Loaded lazily: OverworldBattle requires this renderer while it is being
+-- constructed. Runtime draw/cast calls happen only after both modules exist,
+-- so the lazy edge avoids a load-time cycle and gives every battler provider
+-- the same scene seam Stadium previously occupied directly.
+local function battleBackend() return V.require("OverworldBattle") end
+
 -- The GB frame the battle screen is drawn in, and the frame BattleCam's rig
 -- is solved against.
 BattleScene.GB_W = 160
@@ -329,11 +335,9 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
   -- A DISC RUNG: the two discs are the only ground there is, so they are the
   -- only thing the sun has to see besides the Pokemon themselves. Everything
   -- below this is a map that is not in the shot.
-  if arena.discs then
-    pcall(function()
-      V.require("StadiumStage").cast(ShadowMap, arena, groundY or 0)
-    end)
-    pcall(function() V.require("Stadium").cast(ShadowMap) end)
+  if arena.stageReplacesMap or arena.discs then
+    battleBackend().stageCall("cast", ShadowMap, arena, groundY or 0)
+    battleBackend().battlerCall("cast", ShadowMap)
     ShadowMap.finish(sig)
     return
   end
@@ -377,7 +381,7 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
   -- the world -- a Gyarados at the water's edge should put a Gyarados on
   -- the water. Un-snugged for the same reason: snug is a bias for a card
   -- rooted to the ground plane, and a model has thickness of its own.
-  pcall(function() V.require("Stadium").cast(ShadowMap) end)
+  battleBackend().battlerCall("cast", ShadowMap)
 
   ShadowMap.finish(sig)
 end
@@ -391,7 +395,7 @@ function BattleScene.groundY(map, arena)
   -- plane, so there is no terrain height to read and reading one would put
   -- the stage at whatever elevation the map happens to have at a spot the
   -- fight is not actually happening on
-  if arena and arena.discs then return 0 end
+  if arena and (arena.stageReplacesMap or arena.discs) then return 0 end
   local ok, h = pcall(VoxelScene.groundAt, map,
                       arena.playerCell[1], arena.playerCell[2])
   return (ok and h) or 0
@@ -497,7 +501,7 @@ function BattleScene.render(state, arena, textures, token)
   -- the letterbox, the camera solve, the sun, the pins, the tint, the depth
   -- of field -- because none of it is about the terrain; what changes is
   -- which geometry the two passes draw.
-  local discs = arena.discs and true or false
+  local discs = (arena.stageReplacesMap or arena.discs) and true or false
 
   -- shares the free-roam mode's request/evict bookkeeping, so a battle warms
   -- exactly the meshes walking around would have and nothing extra
@@ -614,7 +618,7 @@ function BattleScene.render(state, arena, textures, token)
       -- neighbouring maps, no water, no grass and no flowers -- see the
       -- matching skips further down. What is behind them is the sky the
       -- clear painted.
-      V.require("StadiumStage").draw(arena, groundY)
+      battleBackend().stageCall("draw", arena, groundY)
     else
       Voxel3D.draw(terrain, atlasFor(host), nil)
       for i, nb in ipairs(neighbors) do
@@ -694,15 +698,12 @@ function BattleScene.render(state, arena, textures, token)
     end
     Voxel3D.glass(true)
     Voxel3D.seams(true)
-    -- and the STADIUM models, inside the same flash window and with the
+    -- and the selected model provider, inside the same flash window and with the
     -- same camera-ward pull, so a Pokemon standing on its tile still wins
     -- the depth test against the tile. They manage the wireframe and the
     -- glass mask around their own draws (StadiumRig), which is why this
     -- sits outside the pair above rather than inside it.
-    local okStadium, stadiumErr = pcall(function()
-      V.require("Stadium").draw(BattleBillboard.PULL)
-    end)
-    if not okStadium then V.require("Stadium").report(stadiumErr) end
+    battleBackend().battlerCall("draw", BattleBillboard.PULL)
     if flashing then Voxel3D.flatten(nil) end
     -- grass and flowers ride the same camera-ward pull the free-roam pass
     -- gives them, measured against THIS camera's pitch rather than the

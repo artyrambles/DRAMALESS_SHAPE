@@ -13,6 +13,7 @@ return {
       "with 3D-BTL on 2D-3D A, a battle draws over the map's nearest clear ground instead of over a white field",
       "with 3D-BTL on a B rung, the fight is staged on two discs against the sky with no map drawn at all, which works on every map including the caves and shop floors that have nowhere to stage a fight",
       "with 3D-BTL on STADIUM A or STADIUM B, the same fight is staged with the Pokemon Stadium battle models in place of the flat pics -- 148 of the 151 species, skinned and animated, playing the animation the move being used actually calls for; Exeggutor, Tangela and Magmar have corrupt animation data at source and keep their battle sprites",
+      "companion mods may add equal-standing 3D-BTL presets through the public battle API, replacing only their stage, battlers or other named components while inheriting the rest from a built-in fallback",
       "the battle's text box and menu are frosted glass over that ground rather than an opaque white slab, on the same panels the HUDs sit on",
       "the map's NPCs are culled for the length of a battle, so the wipe plays over an empty map",
       "a battle's letterbox voids go black rather than white, because the battle canvas is no longer white",

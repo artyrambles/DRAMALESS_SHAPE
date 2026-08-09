@@ -37,6 +37,8 @@ function ModSetting.new(key, label, values, labels)
   return setmetatable({
     key = key, label = label, values = values, labels = labels,
     index = nil,          -- nil = not yet read back from the persisted options
+    storedValue = nil,    -- raw value, even before a late preset recognizes it
+    schemas = {},         -- manager rows whose live choice list follows ours
   }, ModSetting)
 end
 
@@ -94,6 +96,7 @@ function ModSetting:read()
     local ok, got = pcall(mod.options.get, mod.options, self.key)
     if ok then value = got end
   end
+  self.storedValue = value
   self.index = indexOf(self, value)
   return self.index
 end
@@ -117,6 +120,7 @@ function ModSetting:setIndex(i, game)
   i = ((i - 1) % n + n) % n + 1
   self.index = i
   local value, id = self.values[i], modId()
+  self.storedValue = value
   local opts = game and game.save and game.save.options
   if opts then
     opts.modOptions = opts.modOptions or {}
@@ -165,7 +169,47 @@ end
 -- which writes and persists on its own). Nothing to store: just move the
 -- cached index so the next read agrees with it.
 function ModSetting:sync(value)
+  self.storedValue = value
   self.index = indexOf(self, value)
+end
+
+-- Replace a setting's ladder without changing the selected STORED value.
+--
+-- Most settings are fixed for the lifetime of the mod, but 3D-BTL is now an
+-- extension surface: dependent mods load after Dramaless and append their
+-- presets through its public export.  Replacing the arrays (rather than
+-- exposing them for callers to mutate) keeps values and labels aligned and
+-- gives the mod-manager schema the same live choices as the in-game row.
+--
+-- Preserve by VALUE rather than index.  Custom presets are sorted by label,
+-- so installing another mod may insert a choice before the selected one; an
+-- index would silently select the wrong preset on that boot.
+function ModSetting:replaceChoices(values, labels)
+  assert(type(values) == "table" and #values > 0,
+    "a mod setting needs at least one value")
+  assert(type(labels) == "table" and #labels == #values,
+    "a mod setting needs one label per value")
+  -- `storedValue` matters when a custom preset was saved on disk but its
+  -- dependent mod has not registered yet. The first read temporarily maps an
+  -- unknown value to index 1; once registration expands the catalog, recover
+  -- the raw value instead of mistaking that temporary fallback for intent.
+  local selected = self.storedValue
+  if selected == nil and self.index then selected = self.values[self.index] end
+  self.values, self.labels = values, labels
+  if selected ~= nil then self.index = indexOf(self, selected) end
+
+  -- options:define keeps the schema table by reference.  Rewrite each choice
+  -- array in place so a manager screen opened after all dependent mods load
+  -- sees their presets without requiring an engine-level dynamic-choice API.
+  for _, schema in ipairs(self.schemas or {}) do
+    local choices = {}
+    for i, value in ipairs(values) do
+      if self:allows(i) then choices[#choices + 1] = { labels[i], value } end
+    end
+    schema.choices = choices
+    schema.default = values[1]
+  end
+  return self
 end
 
 -- The descriptor src/ui/OptionRows.lua renders, in the shape the
@@ -200,8 +244,10 @@ function ModSetting:schema(help)
     return { key = self.key, type = "toggle", label = self.label,
              default = self.values[1], help = help }
   end
-  return { key = self.key, type = "choice", label = self.label,
-           choices = choices, default = self.values[1], help = help }
+  local schema = { key = self.key, type = "choice", label = self.label,
+                   choices = choices, default = self.values[1], help = help }
+  self.schemas[#self.schemas + 1] = schema
+  return schema
 end
 
 return ModSetting

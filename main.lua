@@ -80,6 +80,7 @@ local ChunkMesher = V.require("ChunkMesher")
 local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
 local OverworldBattle = V.require("OverworldBattle")
+local BattlePresets = V.require("BattlePresets")
 local BattleExit = V.require("BattleExit")
 local DayNight = V.require("DayNight")
 local DayTint = V.require("DayTint")
@@ -426,7 +427,10 @@ local SETTINGS = {
     .. "appear once the models have been built, and building them needs a "
     .. "Pokemon Stadium (US) 1.0 ROM of your own -- import it from the "
     .. "STADIUM ROM row, or drop it in the baseroms folder and restart. No "
-    .. "other version works: the reader is keyed to that one cartridge.",
+    .. "other version works: the reader is keyed to that one cartridge. "
+    .. "Companion mods may add choices here; each says exactly which battle "
+    .. "parts it replaces and inherits everything else from one of these "
+    .. "four defaults.",
     when = function() return not VR.enabled() end, full = true },
   -- Only offered while a fight can actually be staged on the map: with 3D-BTL
   -- off the engine draws the classic screen, which is this row's ON already,
@@ -1179,7 +1183,39 @@ mod.hooks:wrap("world.tod", function(next, tod, ctx)
   return DayNight.tod()
 end)
 
-mod.exports.version = "1.6.3"
+mod.exports.version = "1.6.4"
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V
+
+-- Public, versioned battle-composition surface. A dependent mod reaches this
+-- through `mod.find("DRAMALESS_SHAPE").exports.battles`; it never has to know
+-- that OverworldBattle, Stadium or BattleScene are private files. The caller
+-- supplies its own manifest id so every preset is namespaced and equal-priority
+-- collisions are impossible by construction.
+mod.exports.battles = {
+  version = 1,
+  FALLBACK = BattlePresets.FALLBACK,
+  register = function(_, owner, id, definition)
+    return BattlePresets.register(owner, id, definition)
+  end,
+  list = function() return BattlePresets.list() end,
+  resolve = function(_, value, component, context)
+    return BattlePresets.resolve(value, component, context)
+  end,
+  current = function()
+    local value = OverworldBattle.setting:get()
+    return BattlePresets.id(value), BattlePresets.get(value)
+  end,
+  provider = function(_, method, ...)
+    return OverworldBattle.battlerCall(method, ...)
+  end,
+}
+
+-- A dependent mod can fail after calling the export, which the engine cannot
+-- journal because the registry belongs to Dramaless. Once loading settles,
+-- remove registrations whose owners did not survive and refresh both option
+-- surfaces. This event also runs on hot reload.
+mod.events:on("mods.loaded", function()
+  BattlePresets.pruneInactive()
+end)

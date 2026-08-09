@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.6.4
+- Added a public, versioned battle-preset API for every companion mod. The four
+  existing 2D-3D/STADIUM A/B choices remain the defaults and retain their old
+  stored values; custom presets are stable namespaced choices on the same row.
+- Custom presets have equal priority. They declare a fallback and replace only
+  the component slots they own; omitted stage, battler, camera, animation,
+  effect, lighting or HUD components continue down that fallback chain.
+- Migrated Dramaless's own map/disc stages and Stadium models onto the public
+  provider path, including runtime decline/error fallback to Game Boy cards.
+- Added dynamic option-schema refresh so presets registered by dependent mods
+  appear in both the in-game OPTIONS menu and the mod manager.
+- Added [`BATTLE_PRESETS.md`](BATTLE_PRESETS.md) and a standalone API regression
+  test covering legacy values, ordering, inheritance, explicit disable,
+  availability gates, saved custom selections and fallback cycles.
+
 ## 1.6.3
 - Merged [PR#4](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/4#issue-5094930250) and [PR#7](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/7#issue-5095950947) into the main branch, thanks to [anxiousintrovert](https://github.com/anxiousintrovert) for the contributions!
 - The following changes were made by anxiousintrovert to make my fork compatible with their [Stadium Animations](https://github.com/anxiousintrovert/StadiumBattleFX) mod:
