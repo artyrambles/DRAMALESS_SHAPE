@@ -500,9 +500,9 @@ end
 -- a hop rises off the ground instead of sliding north.
 -- Returns the pose list and, separately, the PLAYER's entry in it (nil
 -- during a Fly animation, which draws the player itself and is skipped
--- below). Only that one entry gets the see-through treatment: NPCs and the
--- ghosts standing on a neighbour map are left to honest occlusion, because
--- it is only your own character you cannot afford to lose behind a roof.
+-- below). All posed objects will cast a silhouette when hidden by voxel 
+-- geometry. The player is additionally suppressed while the first-person 
+-- camera is inside their card.
 local function posesOf(state, spriteColors)
   local colors = spriteColors(state.map)
   local posed = {}
@@ -1029,22 +1029,27 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- the panes' atlas positions stripe the cast with lamplight at night
   Voxel3D.glass(false)
 
-  -- The player's silhouette goes down BEFORE the characters, so the only
+  -- The player's (and object's) silhouette goes down BEFORE the characters, so the only
   -- thing it can meet in the depth buffer is the WORLD -- terrain, buildings,
   -- trees. Drawn after the solid pass it would meet the player's own card
   -- instead, and every fragment of a figure sits behind the one that just
   -- wrote it, so the silhouette would paint over the player at all times.
   -- Every character then draws on top as usual, which leaves the silhouette
   -- showing in exactly one situation: where the world hides them.
-  --
+  -- 
   -- Not in first person: the card it silhouettes is the one the camera is
   -- standing inside, and "the world is in front of the player" is every
   -- wall the player faces.
-  if me and not FirstPerson.hidePlayer() then
+  -- Draw silhouettes for objects hidden behind voxel geometry.
+  -- This must happen BEFORE the solid character pass so the ghost depth
+  -- test only sees terrain/buildings/trees and not the characters themselves.
+for _, p in ipairs(posed) do
+  if not (p.isPlayer and FirstPerson.hidePlayer()) then
     Voxel3D.beginGhost()
-    drawGhost(me)
+    drawGhost(p)
     Voxel3D.endGhost()
   end
+end
 
   -- Characters carry no wireframe out here, whatever the V-GRID row says.
   -- The seams are what makes the WORLD read as built out of voxels, and
