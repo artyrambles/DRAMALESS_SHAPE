@@ -6,19 +6,18 @@
 -- is a good set of defaults, but it made another mod choose between replacing
 -- the entire battle backend and patching private Dramaless modules.
 --
--- This module turns those combinations into FALLBACKS.  A companion mod adds
--- a named preset, points it at one fallback, and supplies only the component
--- slots it owns.  A camera mod can therefore replace `camera` while inheriting
--- the stage and battlers; a model mod can replace `battlers` while inheriting
--- Dramaless's map/disc staging.  There is deliberately no priority number:
--- every custom preset is an equal choice on the 3D-BTL row, and the player
--- decides which one is active.
+-- This module turns those combinations into FALLBACKS and, more importantly,
+-- exposes an independent selector for every presentation component. A player
+-- can keep a Dramaless baseline while choosing an arena from mod A, battler
+-- models from mod B, animations from mod C and an announcer from mod D. There
+-- is deliberately no priority number: providers are equal catalog entries and
+-- only the player's selection decides which one is active.
 --
--- Dramaless itself currently consumes the `stage` and `battlers` slots.  The
--- resolver accepts any non-empty slot name so companion mods can compose a
--- larger contract (animations, camera, effects, lighting, HUD) without a
--- second registry.  Such slots become meaningful to Dramaless itself as the
--- corresponding backend seams are adopted.
+-- Named presets remain useful as one-click bundles and for compatibility, but
+-- they are not required to mix mods. Every component selector has DEFAULT as
+-- its first choice; DEFAULT inherits that component from the selected 3D-BTL
+-- baseline. A selected mod provider falls back to that same baseline when it
+-- declines a particular battle or fails safely at runtime.
 
 local V = ...
 
@@ -35,6 +34,67 @@ BattlePresets.ID_2D_B = "dramaless:2d-b"
 BattlePresets.ID_STADIUM_A = "dramaless:stadium-a"
 BattlePresets.ID_STADIUM_B = "dramaless:stadium-b"
 BattlePresets.ID_OFF = "dramaless:off"
+BattlePresets.INHERIT = "dramaless:default"
+
+-- Components with concrete Dramaless runtime dispatch. `stage` and
+-- `battlers` have specialized contracts because they construct the arena and
+-- decide whether each Game Boy card is covered. These slots share the generic
+-- lifecycle documented below: begin, event, update, cast, drawWorld,
+-- beforeScreen, drawScreen, afterScreen, invalidate and finish.
+--
+-- The order is deterministic but is NOT priority. It only makes callbacks
+-- reproducible when several independently selected services are active (for
+-- example animations, an announcer and a HUD). Provider choice happens on
+-- each slot's own row; this order never lets one mod outrank another.
+BattlePresets.RUNTIME_SLOTS = {
+  "animations", "camera", "effects", "audio", "announcer",
+  "hud", "overlay", "screen", "transitions", "presentation",
+}
+
+-- `stage` and `battlers` use specialized renderer contracts; the remaining
+-- rows use the generic lifecycle. Keeping this catalog explicit gives the
+-- options UI stable names and storage keys while provider dispatch stays open
+-- enough for a catch-all `presentation` service.
+BattlePresets.SELECTABLE_SLOTS = {
+  { id = "stage", label = "BTL ARENA",
+    help = "Choose the battle arena provider. DEFAULT uses the arena from 3D-BTL." },
+  { id = "battlers", label = "BTL MODELS",
+    help = "Choose Pokemon cards or model provider. DEFAULT uses 3D-BTL." },
+  { id = "animations", label = "BTL ANIM",
+    help = "Choose world-space battle animations from any installed mod." },
+  { id = "camera", label = "BTL CAMERA",
+    help = "Choose the battle camera provider from any installed mod." },
+  { id = "effects", label = "BTL EFFECTS",
+    help = "Choose particles and world post-processing from any installed mod." },
+  { id = "audio", label = "BTL AUDIO",
+    help = "Choose battle music and sound presentation from any installed mod." },
+  { id = "announcer", label = "BTL VOICE",
+    help = "Choose an announcer or spoken callout provider." },
+  { id = "hud", label = "BTL HUD",
+    help = "Choose the battle HUD provider from any installed mod." },
+  { id = "overlay", label = "BTL OVERLAY",
+    help = "Choose a battle overlay provider from any installed mod." },
+  { id = "screen", label = "BTL SCREEN",
+    help = "Choose a provider that may replace the complete battle screen." },
+  { id = "transitions", label = "BTL TRANS",
+    help = "Choose battle presentation transitions from any installed mod." },
+  { id = "presentation", label = "BTL PRESENT",
+    help = "Choose a catch-all presentation service from any installed mod." },
+}
+
+function BattlePresets.runtimeSlots()
+  local out = {}
+  for i, slot in ipairs(BattlePresets.RUNTIME_SLOTS) do out[i] = slot end
+  return out
+end
+
+function BattlePresets.selectableSlots()
+  local out = {}
+  for i, item in ipairs(BattlePresets.SELECTABLE_SLOTS) do
+    out[i] = { id = item.id, label = item.label, help = item.help }
+  end
+  return out
+end
 
 -- Stored values are intentionally unchanged.  Old options files continue to
 -- read exactly as they did before this API existed; only custom presets use a
@@ -158,6 +218,8 @@ local builtins = {
 }
 
 local custom = {}
+local componentCatalog = {}
+local componentSettings = {}
 local setting = nil
 local warned = {}
 
@@ -209,6 +271,74 @@ local function customList()
     return a.id < b.id
   end)
   return out
+end
+
+local function slotDefinition(slot)
+  for _, item in ipairs(BattlePresets.SELECTABLE_SLOTS) do
+    if item.id == slot then return item end
+  end
+  return nil
+end
+
+local function componentList(slot)
+  local out = {}
+  for _, entry in pairs(componentCatalog[slot] or {}) do
+    out[#out + 1] = entry
+  end
+  -- Alphabetical presentation, then a namespaced stable tie-breaker, is the
+  -- whole priority model: every installed mod gets one equal player choice.
+  table.sort(out, function(a, b)
+    local al, bl = a.label:lower(), b.label:lower()
+    if al ~= bl then return al < bl end
+    return a.id < b.id
+  end)
+  return out
+end
+
+function BattlePresets.componentList(slot)
+  local out = {}
+  for i, entry in ipairs(componentList(slot)) do out[i] = entry end
+  return out
+end
+
+function BattlePresets.componentChoices(slot)
+  assert(slotDefinition(slot), "unknown selectable battle component: " .. tostring(slot))
+  local values, labels = { BattlePresets.INHERIT }, { "DEFAULT" }
+  for _, entry in ipairs(componentList(slot)) do
+    values[#values + 1], labels[#labels + 1] = entry.id, entry.label
+  end
+  return values, labels
+end
+
+local function refreshComponentSetting(slot)
+  local selectedSetting = componentSettings[slot]
+  if not selectedSetting then return end
+  local values, labels = BattlePresets.componentChoices(slot)
+  selectedSetting:replaceChoices(values, labels)
+end
+
+-- Return the live settings used by both the in-game OPTIONS screen and the
+-- mod-manager page. They are created lazily so registry-only tests and tools
+-- can inspect this module without constructing UI state.
+function BattlePresets.componentSettings()
+  local ModSetting = V.require("ModSetting")
+  local out = {}
+  for _, item in ipairs(BattlePresets.SELECTABLE_SLOTS) do
+    if not componentSettings[item.id] then
+      local values, labels = BattlePresets.componentChoices(item.id)
+      componentSettings[item.id] = ModSetting.new(
+        "battle_component_" .. item.id, item.label, values, labels)
+    end
+    out[#out + 1] = {
+      slot = item.id, setting = componentSettings[item.id], help = item.help,
+    }
+  end
+  return out
+end
+
+function BattlePresets.componentSelection(slot)
+  local selectedSetting = componentSettings[slot]
+  return selectedSetting and selectedSetting:get() or BattlePresets.INHERIT
 end
 
 function BattlePresets.list()
@@ -290,6 +420,36 @@ function BattlePresets.register(owner, localId, def)
   return id
 end
 
+-- Register one independently selectable asset/provider. The same local id may
+-- be reused in another slot because each options row has its own namespace;
+-- within a slot, OWNER:local_id is unique and stable in saved options.
+function BattlePresets.registerComponent(owner, slot, localId, def)
+  assert(type(owner) == "string" and owner ~= "",
+    "battle component owner is required")
+  assert(slotDefinition(slot),
+    "unknown selectable battle component: " .. tostring(slot))
+  assert(type(localId) == "string" and localId:match("^[%w_.-]+$"),
+    "battle component id must contain only letters, numbers, dot, dash or underscore")
+  assert(type(def) == "table", "battle component definition is required")
+  assert(def.priority == nil,
+    "battle components have equal priority; the player selects the provider")
+  assert(type(def.label) == "string" and def.label ~= "",
+    "battle component label is required")
+  assert(def.provider ~= nil, "battle component provider is required")
+
+  local id = owner .. ":" .. localId
+  componentCatalog[slot] = componentCatalog[slot] or {}
+  assert(not componentCatalog[slot][id],
+    "battle component already registered for " .. slot .. ": " .. id)
+  componentCatalog[slot][id] = {
+    id = id, owner = owner, slot = slot, label = def.label,
+    provider = def.provider, available = def.available,
+    description = def.description,
+  }
+  refreshComponentSetting(slot)
+  return id
+end
+
 function BattlePresets.available(value, ctx)
   local preset = BattlePresets.get(value)
   if not preset then return false end
@@ -316,6 +476,15 @@ function BattlePresets.pruneInactive()
   for id, preset in pairs(custom) do
     if not ownerActive(preset) then custom[id], changed = nil, true end
   end
+  for slot, entries in pairs(componentCatalog) do
+    local slotChanged = false
+    for id, entry in pairs(entries) do
+      if not ownerActive(entry) then
+        entries[id], changed, slotChanged = nil, true, true
+      end
+    end
+    if slotChanged then refreshComponentSetting(slot) end
+  end
   if changed then refreshSetting() end
   return changed
 end
@@ -325,7 +494,38 @@ end
 -- it means "this component is deliberately absent", not "I do not own it".
 function BattlePresets.providers(value, slot, ctx)
   assert(type(slot) == "string" and slot ~= "", "battle component name is required")
-  local out, seen = {}, {}
+  local out, seen, providerSeen = {}, {}, {}
+  local function append(provider, source)
+    -- A provider selected independently may also be present in a bundle's
+    -- baseline. Never activate the same object twice when it requests fallback.
+    if providerSeen[provider] then return false end
+    providerSeen[provider] = true
+    out[#out + 1] = { provider = provider, preset = source }
+    return provider == false
+  end
+
+  -- The component row has the first and only say over this slot. If its
+  -- selected provider is unavailable, it simply contributes nothing and the
+  -- selected 3D-BTL baseline below remains the safe fallback. We never try a
+  -- different mod automatically because that would recreate hidden priority.
+  local selectedId = BattlePresets.componentSelection(slot)
+  local selected = selectedId ~= BattlePresets.INHERIT
+                   and componentCatalog[slot]
+                   and componentCatalog[slot][selectedId] or nil
+  if selected and ownerActive(selected) then
+    local allowed = true
+    if selected.available then
+      local ok, answer = pcall(selected.available, ctx, selected)
+      allowed = ok and answer and true or false
+      if not ok then
+        logFailure("selected-component:" .. slot .. ":" .. selected.id,
+          "battle component %s availability failed: %s",
+          selected.id, tostring(answer))
+      end
+    end
+    if allowed and append(selected.provider, selected) then return out end
+  end
+
   local id = canonical(value)
   while id and not seen[id] do
     seen[id] = true
@@ -351,8 +551,7 @@ function BattlePresets.providers(value, slot, ctx)
       if allowed then
         local provider = spec.provider
         if provider ~= nil then
-          out[#out + 1] = { provider = provider, preset = preset }
-          if provider == false then break end
+          if append(provider, preset) then break end
         end
       end
     end

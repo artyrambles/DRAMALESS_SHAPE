@@ -50,6 +50,11 @@ local ChunkMesher = V.require("ChunkMesher")
 local BattlePresets = V.require("BattlePresets")
 
 local OverworldBattle = {}
+local unpackValues = table.unpack or unpack
+
+local function packValues(...)
+  return { n = select("#", ...), ... }
+end
 
 -- DS_BATTLE_DEBUG=1 logs what the HUD's brightness probe is reading, once a
 -- second, which is how the glyph flip is checked from a shot run. Read
@@ -61,10 +66,11 @@ if DEBUG == nil or DEBUG == false then DEBUG = nil end
 OverworldBattle.KEY = "battles"
 OverworldBattle.LABEL = "3D-BTL"
 
--- Five DEFAULT rungs. Two independent choices, laid out as one ladder because
--- they are one question to the player -- WHAT is standing there, and WHERE.
--- BattlePresets may insert companion-mod choices before OFF; these four stay
--- first, remain the fallback vocabulary, and never acquire hidden priority:
+-- Five BASELINE rungs. Two Dramaless choices are laid out as one ladder --
+-- WHAT is standing there, and WHERE. Companion mods may still add a one-click
+-- bundle before OFF, but the independent BTL ARENA / MODELS / ANIM / VOICE
+-- rows are the normal extension path: each overrides only its own component
+-- and uses this row as fallback. These four stay first and retain old storage:
 --
 --              on the MAP              on two DISCS
 --   pics       2D-3D A                 2D-3D B
@@ -114,11 +120,9 @@ OverworldBattle.LABEL = "3D-BTL"
 -- the game's own art, so it needs nothing the base game did not ship.
 OverworldBattle.FLAT_B = "flatB"
 
--- BattlePresets owns the catalog while ModSetting continues to own storage,
--- cycling and the two option surfaces.  The first five stored values are the
--- historical true/flatB/stadium/stadiumB/false values; dependent mods append
--- canonical owner:id strings after Dramaless has loaded, and bindSetting keeps
--- this same object (and its manager schema) synchronized with that live list.
+-- BattlePresets owns the catalogs while ModSetting owns storage, cycling and
+-- both option surfaces. The historical values remain untouched; optional
+-- bundles and independent component rows store stable owner:id strings.
 local battleValues, battleLabels = BattlePresets.choices()
 OverworldBattle.setting =
   ModSetting.new(OverworldBattle.KEY, OverworldBattle.LABEL,
@@ -525,8 +529,18 @@ function OverworldBattle.stageFor(state, battle)
   for _, entry in ipairs(BattlePresets.providers(value, "stage", ctx)) do
     local provider = entry.provider
     if provider == false then return nil end
+    local allowed = true
+    if type(provider) == "table" and type(provider.available) == "function" then
+      local ok, answer = pcall(provider.available, provider, ctx)
+      allowed = ok and answer and true or false
+      if not ok and V.mod and V.mod.log then
+        V.mod.log:warn("battle stage %s availability failed: %s -- trying "
+                       .. "its fallback",
+                       tostring(provider.id or entry.preset.id), tostring(answer))
+      end
+    end
     local arenaFn = type(provider) == "table" and provider.arena or nil
-    if type(arenaFn) == "function" then
+    if allowed and type(arenaFn) == "function" then
       local ok, arena = pcall(arenaFn, provider, ctx, state)
       if ok and arena and arena ~= BattlePresets.FALLBACK then
         -- BattleScene receives the arena rather than the preset. Carry the
@@ -596,6 +610,74 @@ local function retireBattlers(s)
   end
 end
 
+-- Generic presentation components use the same fallback semantics as
+-- battlers, but each slot has an independent active provider. A preset may
+-- therefore inherit Stadium animations, replace only the announcer, and use
+-- Dramaless's camera without those choices affecting one another.
+local function activateNextComponent(s, slot)
+  local state = s and s.components and s.components[slot]
+  if not state then return nil end
+  while state.index < #state.candidates do
+    state.index = state.index + 1
+    local provider = state.candidates[state.index].provider
+    if provider == false then
+      state.provider = nil
+      return nil
+    end
+    -- Runtime providers are objects. Static scalars/functions remain useful
+    -- through battles:resolve(), but they have no lifecycle to activate.
+    if type(provider) == "table" then
+      local allowed = true
+      if type(provider.available) == "function" then
+        local ok, answer = pcall(provider.available, provider, s.context)
+        allowed = ok and answer and true or false
+        if not ok and V.mod and V.mod.log then
+          V.mod.log:warn("battle %s provider %s availability failed: %s -- "
+                         .. "trying its fallback", slot,
+                         tostring(provider.id or "unnamed"), tostring(answer))
+        end
+      end
+      if allowed then
+        local ok, answer = true, true
+        if type(provider.begin) == "function" then
+          ok, answer = pcall(provider.begin, provider, s.context, s.arena)
+        end
+        if ok and answer ~= false and answer ~= BattlePresets.FALLBACK then
+          state.provider = provider
+          return provider
+        end
+        if not ok and V.mod and V.mod.log then
+          V.mod.log:warn("battle %s provider %s failed to begin: %s -- trying "
+                         .. "its fallback", slot,
+                         tostring(provider.id or "unnamed"), tostring(answer))
+        end
+      end
+    end
+  end
+  state.provider = nil
+  return nil
+end
+
+local function retireComponent(s, slot)
+  local state = s and s.components and s.components[slot]
+  local provider = state and state.provider
+  if state then state.provider = nil end
+  if provider and type(provider.finish) == "function" then
+    pcall(provider.finish, provider, s.context)
+  end
+end
+
+local function beginComponents(s)
+  s.components = {}
+  for _, slot in ipairs(BattlePresets.RUNTIME_SLOTS) do
+    s.components[slot] = {
+      candidates = BattlePresets.providers(s.context.value, slot, s.context),
+      index = 0, provider = nil,
+    }
+    activateNextComponent(s, slot)
+  end
+end
+
 -- Stage a battle triggered from `state`, if this mode can. Returns true when
 -- a session started -- which is also the only case where anything visible
 -- changes, so a map with no room for an arena plays exactly the vanilla
@@ -625,6 +707,7 @@ function OverworldBattle.begin(state, battle)
   -- A false provider is the ordinary GB-card path. A custom provider that
   -- declines here falls through to its preset's declared battler fallback.
   activateNextBattlers(session)
+  beginComponents(session)
   return true
 end
 
@@ -652,7 +735,14 @@ end
 
 function OverworldBattle.finish()
   if not session then return end
+  for _, slot in ipairs(BattlePresets.RUNTIME_SLOTS) do
+    retireComponent(session, slot)
+  end
   retireBattlers(session)
+  if session.stageProvider
+     and type(session.stageProvider.finish) == "function" then
+    pcall(session.stageProvider.finish, session.stageProvider, session.context)
+  end
   restoreCast()
   session = nil
   Voxel3D.camera = nil
@@ -684,6 +774,87 @@ end
 
 function OverworldBattle.battlerProvider()
   return session and session.battlers or nil
+end
+
+-- Call one concrete presentation component and preserve every return value.
+-- Returning FALLBACK or throwing retires only this slot, initializes the next
+-- provider in its declared chain, and retries. Nil is a normal callback result
+-- and does not accidentally opt into fallback.
+function OverworldBattle.componentCall(slot, method, ...)
+  local s = session
+  local state = s and s.components and s.components[slot]
+  if not state then return nil end
+  while true do
+    local provider = state.provider or activateNextComponent(s, slot)
+    if not provider then return nil end
+    local fn = provider[method]
+    if type(fn) ~= "function" then return nil end
+    local result = packValues(pcall(fn, provider, s.context, ...))
+    if result[1] and result[2] ~= BattlePresets.FALLBACK then
+      return unpackValues(result, 2, result.n)
+    end
+    if not result[1] and V.mod and V.mod.log then
+      V.mod.log:warn("battle %s provider %s.%s failed: %s -- trying its "
+                     .. "fallback", slot, tostring(provider.id or "unnamed"),
+                     tostring(method), tostring(result[2]))
+    end
+    retireComponent(s, slot)
+  end
+end
+
+function OverworldBattle.componentProvider(slot)
+  local state = session and session.components and session.components[slot]
+  return state and state.provider or nil
+end
+
+function OverworldBattle.componentsCall(method, ...)
+  for _, slot in ipairs(BattlePresets.RUNTIME_SLOTS) do
+    OverworldBattle.componentCall(slot, method, ...)
+  end
+end
+
+-- Let presentation providers post-process the completed world target in a
+-- deterministic order. Each callback receives the result of the previous
+-- callback, so effects can be composed without any provider having to know
+-- which other mods are installed. Returning nil means "leave it unchanged";
+-- returning FALLBACK still has the normal per-slot fallback semantics.
+function OverworldBattle.worldPresent(canvas, ...)
+  local current = canvas
+  for _, slot in ipairs(BattlePresets.RUNTIME_SLOTS) do
+    local replacement = OverworldBattle.componentCall(
+      slot, "worldPresent", current, ...)
+    if replacement ~= nil then
+      -- Accept only canvas-like targets. A stray boolean or metadata table
+      -- must not reach Renderer:setWorldOverride and turn one bad return value
+      -- into a later, unrelated draw crash.
+      local ok, width, height = pcall(function()
+        return replacement:getWidth(), replacement:getHeight()
+      end)
+      if ok and type(width) == "number" and type(height) == "number" then
+        current = replacement
+      elseif V.mod and V.mod.log then
+        V.mod.log:warn("battle %s provider returned a non-canvas world target; "
+                       .. "keeping the previous target", slot)
+      end
+    end
+  end
+  return current
+end
+
+-- Semantic battle events are forwarded by main.lua. This is the announcer's
+-- primary seam: it receives move_used, damage_dealt, fainted, switched,
+-- ball_thrown, turn boundaries and battle end without polling private fields.
+function OverworldBattle.event(name, payload)
+  if not session then return end
+  if payload and payload.battle then
+    session.battle = payload.battle
+    session.context.battle = payload.battle
+  end
+  session.context.event = name
+  OverworldBattle.stageCall("event", name, payload)
+  OverworldBattle.battlerCall("event", name, payload)
+  OverworldBattle.componentsCall("event", name, payload)
+  session.context.event = nil
 end
 
 function OverworldBattle.stageCall(method, ...)
@@ -759,8 +930,12 @@ function OverworldBattle.update(dt)
   -- here too, once for the frame -- the sun pass, the camera and, in a
   -- headset, both eyes all draw the same skinned meshes.
   local host = (session.arena and session.arena.map) or session.state.map
+  local groundY = BattleScene.groundY(host, session.arena)
+  OverworldBattle.stageCall("update", dt, session.battle, groundY)
   OverworldBattle.battlerCall("update", dt, session.battle,
-                              BattleScene.groundY(host, session.arena))
+                              groundY)
+  OverworldBattle.componentsCall("update", dt, session.battle,
+                                 groundY)
 
   -- The mons' textures are rendered HERE, with no canvas bound, for the same
   -- reason the scene is: the pics layer binds its own targets, and doing that
@@ -821,8 +996,13 @@ function OverworldBattle.update(dt)
     -- the glass is frosted from the world alone and never from the glyphs
     -- about to sit on it.
     local ios = isIOS()
+    local hudProvider = OverworldBattle.componentProvider("hud")
+    local screenProvider = OverworldBattle.componentProvider("screen")
+    local customHud = hudProvider and type(hudProvider.drawHud) == "function"
+    local customScreen = screenProvider
+                         and type(screenProvider.drawScreen) == "function"
     local okHud, up = false, false
-    if not ios then
+    if not ios and not customHud and not customScreen then
       okHud, up = pcall(OverworldBattle.snapHUDs, session.battle, shot)
     end
     session.snapped = (okHud and up) and true or false
@@ -951,7 +1131,9 @@ function OverworldBattle.invalidate()
   -- A provider owns GPU objects on the same footing as Stadium did. Only the
   -- active provider has begun a session; inactive definitions are data and do
   -- not need to be instantiated merely because the window resized.
+  OverworldBattle.stageCall("invalidate")
   OverworldBattle.battlerCall("invalidate")
+  OverworldBattle.componentsCall("invalidate")
 end
 
 -- ------- the battle screen's background
@@ -1354,8 +1536,29 @@ function OverworldBattle.install()
     -- the white letterbox exists so the window matches the white battle
     -- canvas; there is a world out to the window edges now
     self.letterboxWhite = false
-    OverworldBattle.drawHudPanels(self)
-    withoutBackgroundFill(self, innerDraw)
+    -- These two hooks are deliberately outside the default-screen decision.
+    -- A HUD or overlay provider can decorate either the stock screen or a
+    -- replacement screen without taking ownership of the whole composition.
+    OverworldBattle.componentsCall("beforeScreen", self, shot)
+
+    -- The dedicated screen component is the broadest presentation seam. A
+    -- callback returns true only when it drew the complete battle UI and the
+    -- engine screen should be skipped. Nil/false keeps the normal screen, so
+    -- a provider can remain observational until a specific battle needs it.
+    local claimed = OverworldBattle.componentCall(
+      "screen", "drawScreen", self, shot) == true
+    if not claimed then
+      -- HUD ownership is narrower than screen ownership. Returning true from
+      -- drawHud suppresses only the engine HP/name/status blocks; menus, text,
+      -- animations and the rest of the stock battle screen continue normally.
+      local customHud = OverworldBattle.componentCall(
+        "hud", "drawHud", self, shot) == true
+      self.dramalessCustomHud = customHud
+      if not customHud then OverworldBattle.drawHudPanels(self) end
+      withoutBackgroundFill(self, innerDraw)
+      self.dramalessCustomHud = nil
+    end
+    OverworldBattle.componentsCall("afterScreen", self, shot, claimed)
   end
 
   -- The mons are geometry standing on the map now, drawn in the 3D pass
@@ -1408,6 +1611,14 @@ function OverworldBattle.install()
   function BattleState:drawAnimLayer(colorized)
     local shot = self.dramaticShapeShot
     if not shot then return innerAnim(self, colorized) end
+    -- An animation provider may replace the authored Game Boy effect layer
+    -- without claiming the complete screen. It can also draw 3D animation in
+    -- drawWorld; returning true here says its replacement is complete and the
+    -- stock 2D move layer should not be drawn for this frame.
+    if OverworldBattle.componentCall(
+         "animations", "drawAnimation", self, colorized, shot) == true then
+      return
+    end
     -- Move animations are authored against the pics' old fixed slots, and one
     -- animation reaches across both sides, so there is no per-side offset to
     -- give them. They ride to where the PAIR went: the midpoint of the two
@@ -1494,7 +1705,8 @@ function OverworldBattle.install()
     -- Normally the HUDs have already been drawn this frame, snapped out to the
     -- window's edges and composited into the world image (snapHUDs). Drawing
     -- them here as well would show each block twice, once in each place.
-    if self.dramaticShapeShot and snapped() then return end
+    if self.dramaticShapeShot
+       and (self.dramalessCustomHud or snapped()) then return end
     return innerHUDs(self, slide)
   end
 

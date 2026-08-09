@@ -1,19 +1,25 @@
 # Changelog
 
 ## 1.6.4
-- Added a public, versioned battle-preset API for every companion mod. The four
-  existing 2D-3D/STADIUM A/B choices remain the defaults and retain their old
-  stored values; custom presets are stable namespaced choices on the same row.
-- Custom presets have equal priority. They declare a fallback and replace only
-  the component slots they own; omitted stage, battler, camera, animation,
-  effect, lighting or HUD components continue down that fallback chain.
+- Added a public, versioned battle-presentation API for every companion mod.
+  The four existing 2D-3D/STADIUM A/B choices remain the baselines and retain
+  their old stored values.
+- Added independent, persisted selectors for arena, Pokemon models, animations,
+  camera, effects, audio, announcer, HUD, overlay, complete screen, transitions
+  and catch-all presentation. A player can mix each asset from a different mod.
+- All mod providers have equal priority: choices sort alphabetically and only
+  the player's explicit selection wins. Selected assets safely fall back to
+  the chosen Dramaless baseline, never to another unselected mod.
 - Migrated Dramaless's own map/disc stages and Stadium models onto the public
   provider path, including runtime decline/error fallback to Game Boy cards.
-- Added dynamic option-schema refresh so presets registered by dependent mods
+- Added concrete lifecycle seams for imported world models, animation/effects,
+  camera replacement, canvas post-processing, audio/announcer event reactions,
+  HUD/overlays and complete battle-screen ownership.
+- Added dynamic option-schema refresh so providers registered by dependent mods
   appear in both the in-game OPTIONS menu and the mod manager.
 - Added [`BATTLE_PRESETS.md`](BATTLE_PRESETS.md) and a standalone API regression
-  test covering legacy values, ordering, inheritance, explicit disable,
-  availability gates, saved custom selections and fallback cycles.
+  suite covering legacy values, mix-and-match selection, equal ordering,
+  inheritance, availability gates, saved selections and runtime fallback.
 
 ## 1.6.3
 - Merged [PR#4](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/4#issue-5094930250) and [PR#7](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/7#issue-5095950947) into the main branch, thanks to [anxiousintrovert](https://github.com/anxiousintrovert) for the contributions!

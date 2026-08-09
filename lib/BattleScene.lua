@@ -338,6 +338,9 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
   if arena.stageReplacesMap or arena.discs then
     battleBackend().stageCall("cast", ShadowMap, arena, groundY or 0)
     battleBackend().battlerCall("cast", ShadowMap)
+    -- Custom models and effects may cast their own geometry. Every runtime
+    -- component gets the same shadow pass; slots without `cast` are no-ops.
+    battleBackend().componentsCall("cast", ShadowMap, arena, groundY or 0)
     ShadowMap.finish(sig)
     return
   end
@@ -382,6 +385,7 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
   -- the water. Un-snugged for the same reason: snug is a bias for a card
   -- rooted to the ground plane, and a model has thickness of its own.
   battleBackend().battlerCall("cast", ShadowMap)
+  battleBackend().componentsCall("cast", ShadowMap, arena, groundY or 0)
 
   ShadowMap.finish(sig)
 end
@@ -527,13 +531,26 @@ function BattleScene.render(state, arena, textures, token)
   local cam, pitch = BattleCam.rig(arena, groundY)
   cam.fov = BattleScene.letterboxFov(cam.fov, ph, s)
 
+  -- A camera provider starts from the fully solved Dramaless camera instead
+  -- of rebuilding engine internals. It may replace the camera table, pitch,
+  -- and/or the world-frame height independently by returning nil for values
+  -- it wants to inherit. Runtime fallback is isolated to the camera slot.
+  local suppliedCam, suppliedPitch, suppliedFrameH =
+    battleBackend().componentCall("camera", "camera", cam, pitch, groundY, {
+      letterboxX = lx, letterboxY = ly, scale = s,
+      pixelWidth = pw, pixelHeight = ph,
+    })
+  if type(suppliedCam) == "table" then cam = suppliedCam end
+  if type(suppliedPitch) == "number" then pitch = suppliedPitch end
+
   local cx, cy = arena.mid[1], arena.mid[2]
   -- the world extents the sun frustum is fitted to; the camera itself is
   -- framed by cam.fov, so these only have to describe the ground in shot
   -- the player's zoom is part of this: the sun's box is fitted to what the
   -- frame holds, so a shot pulled wide has to light the ground it just
   -- brought into view rather than the ground the rig alone would have
-  local vh = BattleCam.frameH(arena) * ph / (BattleScene.GB_H * s)
+  local frameH = tonumber(suppliedFrameH) or BattleCam.frameH(arena)
+  local vh = frameH * ph / (BattleScene.GB_H * s)
   local vw = vh * pw / ph
 
   -- the cards need the camera's eye to face it, so the rig has to be live
@@ -725,7 +742,21 @@ function BattleScene.render(state, arena, textures, token)
                     ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
       end
     end
+    -- World-space animations, particles, props and catch-all presentation
+    -- geometry draw after the stock arena and battlers, but before the scene
+    -- target is resolved. Providers use the same live Voxel3D state and may
+    -- manage their own depth-tested meshes through their own mod assets.
+    battleBackend().componentsCall("drawWorld", BattleBillboard.PULL,
+                                   arena, groundY)
     local canvas = AntiAlias.resolve(Voxel3D.endScene(), pw, ph, "battle")
+    if not canvas then return end
+    -- Post-processing providers are chained: each receives the canvas left by
+    -- the previous slot and may return a replacement target or nil to retain
+    -- it. This is after antialiasing and before the battle UI is composited.
+    canvas = battleBackend().worldPresent(canvas, arena, groundY, {
+      letterboxX = lx, letterboxY = ly, scale = s,
+      pixelWidth = pw, pixelHeight = ph,
+    })
     if not canvas then return end
 
     local vp = Voxel3D.vp

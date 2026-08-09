@@ -23,6 +23,7 @@ local BattlePresets = assert(loadfile("lib/BattlePresets.lua"))(V)
 -- the raw value so expanding the ladder later restores that selection.
 V.mod.options = { get = function() return "LATE:preset" end }
 local ModSetting = assert(loadfile("lib/ModSetting.lua"))(V)
+modules.ModSetting = ModSetting
 local late = ModSetting.new("battles", "3D-BTL", { true, false }, { "A", "OFF" })
 assert(late:get() == true)
 late:replaceChoices({ true, "LATE:preset", false }, { "A", "LATE", "OFF" })
@@ -87,6 +88,52 @@ local unavailable = BattlePresets.register("OPTIONAL", "camera", {
   },
 })
 assert(BattlePresets.resolve(unavailable, "camera") == camera)
+
+-- Asset rows compose independently of the baseline preset. Providers were
+-- registered in reverse alphabetical order to prove that load/manifest
+-- priority does not decide their placement or selection.
+local selectors = {}
+for _, item in ipairs(BattlePresets.componentSettings()) do
+  selectors[item.slot] = item.setting
+end
+local arenaZ = { id = "arena:z" }
+local arenaA = { id = "arena:a" }
+BattlePresets.registerComponent("ZZ_ARENA", "stage", "arena", {
+  label = "Z ARENA", provider = arenaZ,
+})
+local arenaAId = BattlePresets.registerComponent("AA_ARENA", "stage", "arena", {
+  label = "A ARENA", provider = arenaA,
+})
+local stageValues, stageLabels = BattlePresets.componentChoices("stage")
+assert(stageValues[1] == BattlePresets.INHERIT)
+assert(stageLabels[2] == "A ARENA" and stageLabels[3] == "Z ARENA")
+selectors.stage:setValue(arenaAId)
+local mixedStages = BattlePresets.providers(cameraPreset, "stage")
+assert(mixedStages[1].provider == arenaA)
+-- Runtime fallback from the explicitly selected asset returns to the stage
+-- inherited from the 3D-BTL baseline, never to another unselected mod.
+assert(mixedStages[2].provider == stage)
+assert(mixedStages[3] and mixedStages[3].provider ~= arenaZ)
+assert(mixedStages[4] == nil)
+
+local modelsB = { id = "models:b" }
+local modelsBId = BattlePresets.registerComponent("BB_MODELS", "battlers", "models", {
+  label = "B MODELS", provider = modelsB,
+})
+selectors.battlers:setValue(modelsBId)
+assert(BattlePresets.resolve(cameraPreset, "battlers") == modelsB)
+-- Arena and model choices are stored on different rows and can therefore be
+-- supplied by unrelated mods at the same time.
+assert(BattlePresets.componentSelection("stage") == arenaAId)
+assert(BattlePresets.componentSelection("battlers") == modelsBId)
+selectors.stage:setValue(BattlePresets.INHERIT)
+selectors.battlers:setValue(BattlePresets.INHERIT)
+
+local okComponent, componentErr = pcall(
+  BattlePresets.registerComponent, "BAD", "camera", "priority", {
+    label = "BAD CAMERA", provider = {}, priority = 10,
+  })
+assert(not okComponent and tostring(componentErr):find("equal priority", 1, true))
 
 local stadiumFallback = BattlePresets.register("OPTIONAL", "stadium", {
   label = "OPTIONAL STADIUM",

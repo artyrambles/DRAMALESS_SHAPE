@@ -1,23 +1,24 @@
-# Extending Dramaless battles
+# Composing Dramaless battles
 
-Dramaless exposes a public battle-preset API for companion mods. A preset is
-an equal-standing choice on the **3D-BTL** row. It inherits one existing preset
-and replaces only the named components it owns.
+Dramaless exposes a public battle-presentation API for companion mods. The
+four built-in **3D-BTL** choices remain the baseline, while every battle asset
+can be selected independently. A player can therefore use an arena from mod A,
+Pokemon models from mod B, animations from mod C, an announcer from mod D and
+a HUD from mod E. No mod has implicit priority; each provider is an equal
+alphabetical option and the player's saved selection is authoritative.
 
-The four Dramaless choices always remain the defaults:
-
-| id | existing stored value | stage | battlers |
+| baseline id | existing stored value | arena | battlers |
 | --- | --- | --- | --- |
 | `dramaless:2d-a` | `true` | map | Game Boy cards |
 | `dramaless:2d-b` | `"flatB"` | discs | Game Boy cards |
 | `dramaless:stadium-a` | `"stadium"` | map | Stadium models |
 | `dramaless:stadium-b` | `"stadiumB"` | discs | Stadium models |
 
-Those stored values were not changed, so existing options files remain valid.
-Custom presets store their namespaced `MOD_ID:local_id` instead of a numeric
-position; adding or removing another mod cannot change what a saved value means.
+Those legacy values are unchanged. Each new asset row stores either
+`dramaless:default` or a namespaced `MOD_ID:local_id`, so installing or
+removing a different mod cannot change what an existing save means.
 
-## Registering a preset
+## Register one selectable asset
 
 Declare Dramaless as a dependency so it loads before your entry point:
 
@@ -25,118 +26,177 @@ Declare Dramaless as a dependency so it loads before your entry point:
 "dependencies": ["DRAMALESS_SHAPE@>=1.6.4 <2.0.0"]
 ```
 
-Then register during normal mod initialization:
+Then register each component your mod supplies:
 
 ```lua
 local mod = ...
 local ds = assert(mod.find("DRAMALESS_SHAPE"), "Dramaless is required")
-local battles = assert(ds.exports.battles, "Dramaless battle API is unavailable")
+local battles = assert(ds.exports.battles, "Battle API is unavailable")
 
-battles:register(mod.id, "cinematic", {
-  label = "CINEMATIC",
-  fallback = "dramaless:stadium-b",
-  description = "My models on Dramaless's disc stage",
-  components = {
-    battlers = myBattlerProvider,
-    camera = myCameraProvider,
-  },
+battles:registerComponent(mod.id, "battlers", "hd-models", {
+  label = "HD MODELS",
+  description = "My models for both battle sides",
+  provider = myModelProvider,
+})
+
+battles:registerComponent(mod.id, "animations", "cinematic-moves", {
+  label = "CINEMATIC MOVES",
+  provider = myAnimationProvider,
+  available = function(ctx, registration)
+    return myAssetsWereImported()
+  end,
 })
 ```
 
-All custom presets have equal priority. They appear alphabetically by label,
-then by their namespaced id, regardless of manifest priority or load order. The
-player chooses the active preset. A `priority` field is rejected so a companion
-mod cannot silently outrank another one.
+The options menu adds a row for every slot with installed choices: **BTL
+ARENA**, **BTL MODELS**, **BTL ANIM**, **BTL CAMERA**, **BTL EFFECTS**, **BTL
+AUDIO**, **BTL VOICE**, **BTL HUD**, **BTL OVERLAY**, **BTL SCREEN**, **BTL
+TRANS** and **BTL PRESENT**. `DEFAULT` inherits that component from 3D-BTL.
 
-## Components and fallback
+`priority` is rejected. Choices sort by label and then namespaced id, never by
+manifest priority or load order. If a selected provider is unavailable or
+returns `battles.FALLBACK`, only its own slot falls back to the 3D-BTL baseline.
+No unselected mod is silently tried next.
 
-Each component resolves independently through the declared `fallback` chain:
+## Component contracts
 
-- An omitted component inherits from the fallback.
-- A provider value replaces that component.
-- `false` explicitly disables it and stops fallback for that component.
-- `{ provider = value, available = function(ctx, preset) ... end }` replaces it
-  only while the availability function returns true.
+Every provider method receives a stable `ctx` first. It contains `preset`,
+`value`, `state`, `battle`, `arena`, `overworld`, and temporarily `event` while
+an event is being dispatched. Missing methods are optional no-ops.
 
-Component names are open strings. Dramaless currently consumes `stage` and
-`battlers`; mods may also compose shared slots such as `camera`, `animations`,
-`effects`, `lighting`, or `hud` through `battles:resolve(...)`. This keeps one
-composition model as new backend seams are added.
-
-```lua
-local provider, sourcePreset = battles:resolve(
-  "MY_MOD:cinematic", "camera", context)
-```
-
-Fallback cycles and provider errors are contained and logged rather than
-hanging or taking down the battle renderer.
-
-## Custom stages
-
-A stage provider is a table with:
-
-```lua
-local stage = {
-  id = "MY_MOD:arena",
-  portable = true, -- true when no map-space search is needed
-  replacesMap = true, -- omit Dramaless terrain/water/grass from the scene
-  discs = false,   -- compatibility hint for existing integrations
-}
-
-function stage:arena(ctx, overworldState)
-  -- Return an arena in Dramaless BattleArena shape.
-  -- Return battles.FALLBACK when this map is unsupported.
-  return arena
-end
-
-function stage:cast(ctx, shadowMap, arena, groundY)
-  -- Optional shadow-pass geometry for a stage which replaces the map.
-end
-
-function stage:draw(ctx, arena, groundY)
-  -- Optional visible geometry for a stage which replaces the map.
-end
-```
-
-At runtime, return `battles.FALLBACK` to try the next stage in the preset's
-fallback chain. Returning `nil` from `arena` also declines that stage.
-
-## Custom battlers
-
-A battler provider may implement this lifecycle:
+All runtime providers may implement:
 
 ```lua
 function provider:available(ctx) return true end
 function provider:begin(ctx, arena) return true end
+function provider:event(ctx, name, payload) end
 function provider:update(ctx, dt, battle, groundY) end
-function provider:covers(ctx, battle, side) return true end
-function provider:standing(ctx) return true end
-function provider:cast(ctx, shadowMap) end
-function provider:draw(ctx, cameraPull) end
+function provider:cast(ctx, shadowMap, arena, groundY) end
+function provider:drawWorld(ctx, cameraPull, arena, groundY) end
+function provider:worldPresent(ctx, canvas, arena, groundY, viewport)
+  return canvas -- or nil to keep the current canvas
+end
+function provider:beforeScreen(ctx, battleState, shot) end
+function provider:afterScreen(ctx, battleState, shot, screenWasClaimed) end
 function provider:invalidate(ctx) end
 function provider:finish(ctx) end
 ```
 
-`ctx` contains `preset`, `value`, `state`, `battle`, `arena`, and `overworld`.
-`covers` says whether the provider replaces that side's Game Boy billboard;
-`standing` says whether any geometry remains visible when both billboards are
-absent. Missing methods are optional no-ops.
-
 Returning `false` or `battles.FALLBACK` from `begin` declines the provider.
-Returning `battles.FALLBACK` from a later method retires it, initializes the
-next battler provider in the fallback chain, and retries that operation.
-Thrown errors follow the same safe fallback path.
+Returning `battles.FALLBACK` from a later callback retires just that slot,
+starts its baseline fallback, and retries the callback. A thrown error follows
+the same contained path. `nil` is a normal result and does not request fallback.
+
+### Arena provider (`stage`)
+
+```lua
+local arenaProvider = {
+  id = "MY_MOD:arena",
+  portable = true,      -- no map-space search is required
+  replacesMap = true,   -- omit Dramaless terrain/water/grass
+  discs = false,        -- compatibility hint
+}
+
+function arenaProvider:arena(ctx, overworldState)
+  return arena -- Dramaless BattleArena shape, nil/FALLBACK to decline
+end
+function arenaProvider:cast(ctx, shadowMap, arena, groundY) end
+function arenaProvider:draw(ctx, arena, groundY) end
+function arenaProvider:update(ctx, dt, battle, groundY) end
+function arenaProvider:invalidate(ctx) end
+function arenaProvider:finish(ctx) end
+```
+
+### Pokemon model provider (`battlers`)
+
+```lua
+function models:begin(ctx, arena) return true end
+function models:update(ctx, dt, battle, groundY) end
+function models:covers(ctx, battle, side) return true end
+function models:standing(ctx) return true end
+function models:cast(ctx, shadowMap) end
+function models:draw(ctx, cameraPull) end
+function models:attachment(ctx, side, tag) return x, y, z end
+function models:invalidate(ctx) end
+function models:finish(ctx) end
+```
+
+`covers` decides whether a side's Game Boy billboard is replaced. A provider
+can cover one side and inherit the other. Model files, textures and skeletons
+remain owned and loaded by the companion mod; Dramaless supplies the lifecycle,
+camera/shadow pass and safe fallback boundary.
+
+### Camera, animation, announcer and complete screen
+
+```lua
+function camera:camera(ctx, inheritedCamera, inheritedPitch, groundY, viewport)
+  return myCamera, myPitch, myWorldFrameHeight
+end
+
+function animations:event(ctx, name, payload)
+  if name == "battle.move_used" then queueMove(payload) end
+end
+function animations:update(ctx, dt, battle, groundY) updateQueue(dt) end
+function animations:cast(ctx, shadowMap, arena, groundY) castAnimatedMeshes() end
+function animations:drawWorld(ctx, pull, arena, groundY) drawAnimatedMeshes() end
+function animations:drawAnimation(ctx, battleState, colorized, shot)
+  drawMyReplacementEffectLayer()
+  return true -- suppress the stock Game Boy move-animation layer
+end
+
+function announcer:event(ctx, name, payload)
+  if name == "battle.fainted" then playMyImportedVoiceLine(payload) end
+end
+
+function hud:drawHud(ctx, battleState, shot)
+  drawMyNamesHpAndStatus()
+  return true -- suppress only the stock HUD blocks, not menus or text
+end
+
+function screen:drawScreen(ctx, battleState, shot)
+  drawMyCompleteBattleScreen(battleState, shot)
+  return true -- suppress the engine battle screen for this frame
+end
+```
+
+Semantic events include `battle.started`, `battle.turn_started`,
+`battle.battler_switched`, `battle.turn_ended`, `battle.move_used`,
+`battle.fainted`, `battle.exp_gained`, `battle.ball_thrown`,
+`battle.damage_dealt`, `battle.status_inflicted`, and `battle.ended`.
+
+This API controls presentation, not battle mechanics. Providers may import and
+render their own models, animation data, textures, shaders, sound, music, voice,
+HUD and complete screen composition, but move resolution, damage, capture,
+turn order and networking remain engine-owned.
+
+## Optional one-click bundles
+
+`battles:register(owner, localId, definition)` still adds a named 3D-BTL preset
+that supplies several baseline components together. Independent asset rows
+override it one component at a time. Omitted bundle components inherit its
+`fallback`; `false` explicitly disables a component.
+
+```lua
+battles:register(mod.id, "cinematic", {
+  label = "MY CINEMATIC BASELINE",
+  fallback = "dramaless:stadium-b",
+  components = { stage = myArena, battlers = myModels },
+})
+```
 
 ## Public API
 
 `ds.exports.battles` has API version `1` and provides:
 
-- `register(owner, localId, definition)`
-- `list()`
-- `resolve(value, component, context)`
-- `current()`
+- `register(owner, localId, definition)` for optional bundles
+- `registerComponent(owner, slot, localId, definition)`
+- `list()` and `componentList(slot)`
+- `resolve(baselineValue, slot, context)`
+- `current()`, `componentSelection(slot)` and `componentProvider(slot)`
+- `runtimeSlots()` and `selectableSlots()`
 - `provider(method, ...)` for the active battler provider
+- `component(slot, method, ...)` for any active runtime provider
 - `FALLBACK`
 
-Mods should use this export instead of requiring or patching files under
-`DRAMALESS_SHAPE/lib`.
+Companion mods should use this export instead of requiring or patching files
+under `DRAMALESS_SHAPE/lib`.
