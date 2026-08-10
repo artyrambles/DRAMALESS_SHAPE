@@ -48,6 +48,42 @@ local function indexOf(self, value)
   return self.defaultIndex or 1
 end
 
+-- ------- rungs that are not always there
+--
+-- A ladder may carry a rung that cannot be selected right now -- STADIUM
+-- needs models built out of a ROM the player supplies, and until that has
+-- happened there is nothing behind the option. `gate` is asked per rung and
+-- decides whether it exists at all this frame.
+--
+-- Skipped rather than shown-and-refused, deliberately. A row that can be
+-- cycled onto and then does nothing is indistinguishable from a broken mod;
+-- a row that simply has fewer stops reads as the mod not offering something,
+-- which is the truth. What the player is missing, and how to get it, is said
+-- once in the row's help text instead of implied by a dead setting.
+--
+-- values[1] is never gated: it is the default and the fallback, so there is
+-- always at least one rung to land on.
+function ModSetting:setGate(gate)
+  self.gate = gate
+  return self
+end
+
+function ModSetting:allows(i)
+  if i == 1 or not self.gate then return true end
+  local ok, allowed = pcall(self.gate, self.values[i], i)
+  return (not ok) or allowed and true or false
+end
+
+-- How many rungs are live, for a caller that wants to know whether a row is
+-- worth showing at all.
+function ModSetting:rungs()
+  local n = 0
+  for i = 1, #self.values do
+    if self:allows(i) then n = n + 1 end
+  end
+  return n
+end
+
 -- What the player left it at last session. Read lazily rather than at load
 -- time: the loader fills modOptions before a mod runs, but reading through
 -- the API keeps this honest about where the value lives.
