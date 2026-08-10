@@ -10,16 +10,14 @@
   "game_version": "0.0.0-dev || >=0.1.37 <2.0.0",
   "priority": 100,
   "dependencies": [],
-  "optional_dependencies": [],
+  "optional_dependencies": ["BATTLE_ART_VOXEL_FORK@>=1.8.1"],
   "conflicts": [
     "DRAMATIC_SHAPE",
     "TERRARIUM",
-    "BATTLE_ART_VOXEL_FORK",
     "potato_voxel"
   ],
   "permissions": [
-    "engine_internals",
-    "filesystem"
+    "engine_internals"
   ],
   "affects_link": false,
   "description": "Draws the overworld as a 3D diorama. Fork with edits by Stahltier and others.",
