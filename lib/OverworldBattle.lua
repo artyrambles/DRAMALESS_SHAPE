@@ -180,6 +180,7 @@ end
 function OverworldBattle.stadium()
   local ok, stadium = pcall(V.require, "Stadium")
   return (ok and stadium and stadium.enabled()) and true or false
+end
 -- Public compatibility seam used by Crystal Animated Sprites v1.4+: it asks
 -- whether its BattleState is the one currently being captured into voxel
 -- billboards before choosing its staged palette/transparency path.
