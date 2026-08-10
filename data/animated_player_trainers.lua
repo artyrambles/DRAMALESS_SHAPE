@@ -20,6 +20,7 @@ return {
   gary = five("garyplayer.png"),
   red  = five("redplayer.png"),
   ash_front   = five("ashfrontplayer.png"),
+  misty_front = five("mistyfrontplayer.png"),
   brock_front = five("brockfrontplayer.png"),
   bulma_front = five("bulmafrontplayer.png"),
   gary_front  = five("garyfrontplayer.png"),
