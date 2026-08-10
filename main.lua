@@ -469,33 +469,10 @@ local SETTINGS = {
     full = true },
   -- `full` marks a row FULL does not take away. FULL owns the diorama's own
   -- knobs; what a battle is drawn over, and how it is framed, are not that.
-  -- Off the OPTIONS menu while VR is on: the headset REQUIRES staged
-  -- battles (OverworldBattle.enabled answers true regardless of this row)
-  -- and forbids back sprites (backPinned answers false), so both rows
-  -- decide nothing there and a dead switch on the menu reads as broken.
   { OverworldBattle.setting,
-    "Fight in three dimensions, shot over the shoulder with a slow parallax "
-    .. "drift. 2D-3D stands the game's own battle pics up as cards; STADIUM "
-    .. "replaces them with the Pokemon Stadium battle models, animated, "
-    .. "playing the animation the move being used actually calls for. A "
-    .. "stages the fight on the MAP -- the nearest clear ground, in that "
-    .. "place's own weather and light; B stands it on two discs against the "
-    .. "sky instead, which works everywhere, including the caves and shop "
-    .. "floors that have nowhere to stage a fight. The STADIUM rungs only "
-    .. "appear once the models have been built, and building them needs a "
-    .. "Pokemon Stadium (US) 1.0 ROM of your own -- import it from the "
-    .. "STADIUM ROM row, or drop it in the baseroms folder and restart. No "
-    .. "other version works: the reader is keyed to that one cartridge.",
-    when = function() return not VR.enabled() end, full = true },
-  -- Only offered while a fight can actually be staged on the map: with 3D-BTL
-  -- off the engine draws the classic screen, which is this row's ON already,
-  -- and a row that no longer decides anything is worse than no row.
-  -- Stahl's NOTE to self: this is the perfect spot for checking if 3D-BTL is on one of the stadium modes. need to check if there is a scope-accessible check for this already, otherwise I'll just make my own I guess
-  { OverworldBattle.backSetting,
-    "Keep your own Pokemon on the battle menu, seen from behind in its "
-    .. "original slot, instead of standing it on the map facing the foe. "
-    .. "The foe is still out there on its own tile.",
-    when = function() return stagedBattles() and not VR.enabled() end,
+    "Fight on the map: the battle draws over the nearest clear ground, "
+    .. "shot over the shoulder with a slow parallax drift.",
+    full = true },
   -- HUD SCALE lives with the battle rows: SCALED is the mod's default HUD
   -- (it grows with the battle zoom); OG pins it to the window-fit scale like
   -- upstream gen1recomp's player HUD, so an external XP-bar mod -- which this
