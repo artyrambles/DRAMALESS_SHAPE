@@ -844,9 +844,6 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
                            atlasFor, water, nbWater)
   if not ShadowMap.available() then return end
   local sig = shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
-  -- a staged fight's pics move every frame the animation does, and the sun
-  -- has to follow them (VR frames only; see render)
-  if battleToken then sig = sig .. "|btl" .. tostring(battleToken) end
   if not ShadowMap.stale(sig) then return end
   if not ShadowMap.begin(cx, cy, vw, vh) then return end
 
@@ -908,16 +905,6 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
     end
   end
   ShadowMap.sprites(false)
-  -- and the STADIUM models, outside the sprite flag and un-snugged, for
-  -- the reasons the flat battle pass gives (BattleScene.castShadows):
-  -- these are geometry, not cut-outs
-  pcall(function()
-    local stageArena, stageY = V.require("OverworldBattle").stage()
-    if stageArena and stageArena.discs then
-      V.require("StadiumStage").cast(ShadowMap, stageArena, stageY or 0)
-    end
-    V.require("Stadium").cast(ShadowMap)
-  end)
 
   ShadowMap.finish(sig)
 end
@@ -1129,62 +1116,6 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
   -- character genuinely behind a building is far deeper and loses the
   -- test, so buildings and trees really occlude.
   drawCast(state, posed, atlasFor)
-  -- The staged fight's mons, standing on their arena cells in THIS eye's
-  -- view (VR frames only; battleTex is nil otherwise). Rebuilt per eye
-  -- because the cards yaw toward the eye that is looking. No wireframe
-  -- and no glass on them for the reasons BattleBillboard and the battle
-  -- pass each argue: the cards are not on the voxel grid, and their
-  -- texcoords mean nothing to the tileset's pane mask. The hit flash
-  -- rides the same flatten the battle pass uses, held short of solid.
-  if battleTex then
-    local okB, cards = pcall(function()
-      return V.require("OverworldBattle").worldCards()
-    end)
-    if okB and cards then
-      local BattleScene = V.require("BattleScene")
-      Voxel3D.glass(false)
-      Voxel3D.seams(false)
-      if battleTex.flash then
-        Voxel3D.flatten(BattleScene.FLASH_COLOR, BattleScene.FLASH_STRENGTH)
-      end
-      for _, card in ipairs(cards) do
-        Voxel3D.draw(BattleBillboard.mesh(), card.tex, card.model,
-                     BattleBillboard.PULL)
-      end
-      -- and, on the STADIUM rungs, the models -- the same skinned meshes the
-      -- flat pass and the sun already used this frame, drawn again through
-      -- THIS eye. Unlike the cards there is nothing per-eye about them: a
-      -- model faces its opponent, not the viewer, so both eyes see the same
-      -- pose from their own seats, which is what makes it read as solid.
-      --
-      -- On a disc rung the platforms come with them. In a headset the world is
-      -- still drawn -- the player is standing IN it, which is the whole point
-      -- of the headset, so the rung's "no map" does not apply here -- and the
-      -- discs then read as a stage set down on the ground, which is what they
-      -- are.
-      pcall(function()
-        local stageArena, stageY = V.require("OverworldBattle").stage()
-        if stageArena and stageArena.discs then
-          V.require("StadiumStage").draw(stageArena, stageY or 0)
-        end
-        V.require("Stadium").draw(BattleBillboard.PULL)
-      end)
-      if battleTex.flash then Voxel3D.flatten(nil) end
-      -- and the MOVE ANIMATIONS, standing on the same arena: the
-      -- engine's own effects layer on the plane through both cells
-      -- (BattleScene.fxCard), pulled a little harder than the mons so
-      -- a burst plays over the card it is bursting on
-      local okA, fxTex, fxModel = pcall(function()
-        return V.require("OverworldBattle").worldAnim()
-      end)
-      if okA and fxTex and fxModel then
-        Voxel3D.draw(BattleBillboard.mesh(), fxTex, fxModel,
-                     BattleBillboard.PULL + 6)
-      end
-      Voxel3D.seams(true)
-      Voxel3D.glass(true)
-    end
-  end
   -- tall grass last, pulled camera-ward exactly as far as the characters
   -- were (same per-vertex shader bias, so grass never drifts either):
   -- relative depth between a walker and the tuft row south of their feet
@@ -1219,48 +1150,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
                  ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
   end
 
-  -- The VR pokedex in the player's left hand, last of all: a prop over
-  -- the world drawn with real depth, so leaning it into a wall still
-  -- occludes honestly. Its frame only exists while a session is live and
-  -- the left hand is tracked (VR.lua sets it), so every flat frame skips
-  -- this in one field read. No wireframe and no glass, like the cast:
-  -- the device is a drawing riding the scene, not part of the terrain.
-  if Pokedex.frame then
-    Voxel3D.glass(false)
-    Voxel3D.seams(false)
-    Pokedex.draw()
-    Voxel3D.seams(true)
-    Voxel3D.glass(true)
-  end
-
-  end   -- drawScene
-
-  if not eyes then
-    if not Voxel3D.beginScene(w, h, cx, cy, vw, vh, skyFor(state.map)) then
-      return nil
-    end
-    drawScene()
-    return Voxel3D.endScene()
-  end
-
-  -- The VR frame: the same scene once per eye, each into its own named
-  -- canvas slot under its own placed camera. `adopt` hands the eye's
-  -- record to FirstPerson as the live rig, which is what turns the
-  -- billboards toward THIS eye in first person (cardBlend keys on rig
-  -- identity -- see FirstPerson) and leaves them leaning in the diorama,
-  -- where the blend is zero.
-  local out = {}
-  for i, eye in ipairs(eyes) do
-    Voxel3D.camera = eye.camera
-    if eye.adopt then FirstPerson.adoptVReye(eye.camera) end
-    if not Voxel3D.beginScene(eye.w, eye.h, cx, cy, vw, vh,
-                              skyFor(state.map), eye.slot) then
-      return nil
-    end
-    drawScene()
-    out[i] = Voxel3D.endScene()
-  end
-  return out
+  return Voxel3D.endScene()
 end
 
 return VoxelScene
