@@ -684,7 +684,7 @@ local HOTKEYS = {
   [KEY_TILT]   = "pipeline",
   [KEY_GRID]   = VoxelGrid.setting,
   [KEY_CURVE]  = WorldCurve.setting,
-  [KEY_BATTLE] = OverworldBattle.setting
+  [KEY_BATTLE] = OverworldBattle.setting,
   ["9"] = Water.setting,
 }
 

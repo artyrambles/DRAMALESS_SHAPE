@@ -680,21 +680,21 @@ function BattleScene.render(state, arena, textures, token)
     -- gives them, measured against THIS camera's pitch rather than the
     -- orbit's -- there is no character here for them to overdraw, but the
     -- pull is also what keeps a tuft from z-fighting the floor it stands on
-    --if not whiteFill and not discs then
-    local pull = VoxelScene.pull(math.max(pitch, 0.05))
-    Voxel3D.draw(ChunkMesher.grass(host), atlasFor(host), nil, pull)
-    for _, nb in ipairs(neighbors) do
-      Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy), pull)
-    end
-    local fpull = math.max(0, pull - 8 * math.sin(math.max(pitch, 0.05)))
-    Voxel3D.draw(ChunkMesher.flowers(host), atlasFor(host), nil, fpull,
-                 ShadowMap.snug(nil))
-    for _, nb in ipairs(neighbors) do
-      Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy), fpull,
-                   ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
-    end
+    if not whiteFill and not discs then
+      local pull = VoxelScene.pull(math.max(pitch, 0.05))
+      Voxel3D.draw(ChunkMesher.grass(host), atlasFor(host), nil, pull)
+      for _, nb in ipairs(neighbors) do
+        Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
+                    Mat4.translate(nb.ox, 0, nb.oy), pull)
+      end
+      local fpull = math.max(0, pull - 8 * math.sin(math.max(pitch, 0.05)))
+      Voxel3D.draw(ChunkMesher.flowers(host), atlasFor(host), nil, fpull,
+                  ShadowMap.snug(nil))
+      for _, nb in ipairs(neighbors) do
+        Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
+                    Mat4.translate(nb.ox, 0, nb.oy), fpull,
+                    ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
+      end
     end
     local canvas = AntiAlias.resolve(Voxel3D.endScene(), pw, ph, "battle")
     if not canvas then return end
