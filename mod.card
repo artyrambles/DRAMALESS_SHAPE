@@ -76,8 +76,9 @@ return {
     { who = "pret/pokestadium", for_ = "the decompilation the STADIUM extractor was written against -- the bone matrix chain and where scale is applied (func_800143C0), the rotation basis (func_8000F730), the animation and texture-animation samplers (func_80016FBC / func_80017540), the battle context slots and the move-id constants. No code or data from it is included or redistributed here; see README.md" },
     { who = "The Khronos Group", for_ = "the OpenXR loader shipped unmodified in assets/vr (Apache-2.0; full license text alongside the DLL)" },
     { who = "KingOfSpain", for_ = "The original and main version of this mod."},
-    { who = "BrenoBertucci", for_ = "The TERRARIUM fork of Dramatic Shape which I used code and assets from for this fork."},
-    { who = "anxiousintrovert", for_ = "Compatibility patch with StadiumFX mod."}
+    { who = "BrenoBertucci", for_ = "The TERRARIUM fork of Dramatic Shape which I used quality setting related code from for this fork."},
+    { who = "anxiousintrovert", for_ = "Compatibility patch with StadiumFX mod."},
+    { who = "absol_89", for_ = "The BATTLE ART fork for all of the 2D sprite additions to original DS mod."}
   },
   compat = { engine = ">=0.1.37 <2.0.0", modApi = 2 },
 }

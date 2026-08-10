@@ -190,6 +190,7 @@ end
 --   return session and session.battle or nil
 -- end
 
+
 -- ------- battle-art view
 --
 -- The staged shot stands BOTH mons on the map, which is the mode's whole
@@ -202,6 +203,29 @@ end
 -- STATIC puts supplied art and ROM fallback in the world, ANIMATED puts a
 -- supplied PNG/atlas in the world but leaves a missing ROM fallback on the
 -- original UI anchor, and ROM uses that OG anchor outright.
+
+-- So BACK SPRITES is offered as a middle setting rather than a compromise
+-- imposed on everyone. With it on the foe is still geometry standing on its
+-- tile at the far end of the arena, and the player's side goes back to being
+-- the GB's own flat back pic in the GB's own slot: same art, same 2x, same
+-- feet on row 96.
+-- Nothing else about the shot moves -- the arena, the camera and the drift are
+-- solved exactly as they were, so the foe stands where it always stood and the
+-- player's cell is simply empty ground in the foreground.
+--
+-- OFF by default: what the mode advertises is the pair of them out there.
+OverworldBattle.BACK_KEY = "battleBack"
+OverworldBattle.BACK_LABEL = "BACK SPRITES"
+
+OverworldBattle.backSetting = ModSetting.new(OverworldBattle.BACK_KEY,
+                                             OverworldBattle.BACK_LABEL,
+                                             { false, true }, { "OFF", "ON" })
+
+-- Gated on 3D-BTL rather than read alone: with staged battles off there is no
+-- staged shot for a back pic to be pinned in FRONT of, and the engine's own
+-- battle screen already draws exactly this. And held OFF under VR: the
+-- headset stands both mons on the world -- a flat back pic pinned to the
+-- 2D frame would keep your own mon off the arena the battle seat looks at.
 function OverworldBattle.backPinned()
   if not OverworldBattle.enabled() then return false end
   if vrOn() then return false end
