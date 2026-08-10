@@ -413,6 +413,9 @@ end
 
 local SETTINGS = {
   { VoxelGrid.setting, "One-pixel wireframe along every voxel edge." },
+  { VoxelScene.silhouetteSetting,
+    "Draw silhouettes for characters hidden behind voxel geometry. "
+    .. "OFF disables the silhouette pass completely." },
   { WorldCurve.setting,
     "Bend the world down over the horizon, Animal Crossing style." },
   { Water.setting,
