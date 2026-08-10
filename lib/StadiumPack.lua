@@ -59,7 +59,7 @@ local floor = math.floor
 -- cache should win over whatever a checkout happens to have lying around --
 -- current as judged by StadiumInstall's marker, so a cache an old extractor
 -- built does not shadow a fresh set (see readPack).
-StadiumPack.CACHE_DIR = "dramatic_shape/stadium"
+StadiumPack.CACHE_DIR = "cache/stadium"
 StadiumPack.DIR = "assets/stadium"
 
 local function readPack(species)

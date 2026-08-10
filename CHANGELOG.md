@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.4 HOTFIX for 1.6.3
+- Fixed camera control issues (hopefully), also hotkeys Q and E are no longer claimed by this mod. 
+- Also increased max and min zoom distance in battle.
+- tried to address issues with an incomplete and therefore broken integration with BackPlatesUI.lua (by scrubbing all the references to it)
+- Nuked Horde mode from orbit because gently asking it to leave did not work and in fact caused softlocking in 1st and 3rd person.
+
 ## 1.6.3
 - Merged [PR#4](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/4#issue-5094930250) and [PR#7](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/7#issue-5095950947) into the main branch, thanks to [anxiousintrovert](https://github.com/anxiousintrovert) for the contributions!
 - The following changes were made by anxiousintrovert to make my fork compatible with their [Stadium Animations](https://github.com/anxiousintrovert/StadiumBattleFX) mod:

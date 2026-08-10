@@ -42,7 +42,7 @@ local BattleCam = V.require("BattleCam")
 local BattleBillboard = V.require("BattleBillboard")
 local VoxelGrid = V.require("VoxelGrid")
 local DayNight = V.require("DayNight")
-local UiBackplates = V.require("UiBackplates")
+-- local UiBackplates = V.require("UiBackplates")
 local AntiAlias = V.require("AntiAlias")
 local PaletteFX = require("src.render.PaletteFX")
 local Map = require("src.world.Map")
@@ -597,19 +597,20 @@ function BattleScene.render(state, arena, textures, token)
     -- and skipping the terrain/water/grass/flower draws; the 2D attack
     -- animations and the menus composite on top afterwards, so they stay
     -- above the white too. Requires sprite light UNLIT (see UiBackplates).
-    local whiteFill = UiBackplates.arenaWhite()
-    local skyFill = whiteFill and { 1, 1, 1 } or sky
+  --  local whiteFill = UiBackplates.arenaWhite()
+    --local skyFill = whiteFill and { 1, 1, 1 } or sky
+    local skyFill = { 1, 1, 1 } or sky
     if not Voxel3D.beginScene(rw, rh, cx, cy, vw, vh, skyFill, "battle") then
       return
     end
-    if not whiteFill and not discs then
+  --  if not whiteFill and not discs then
+    if not discs then
       Voxel3D.draw(terrain, atlasFor(host), nil)
       for i, nb in ipairs(neighbors) do
         Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
                    Mat4.translate(nb.ox, 0, nb.oy))
       end
-    end
-    if discs then
+    elseif discs then
       -- discs: the two platforms, and nothing else. No terrain, no
       -- neighbouring maps, no water, no grass and no flowers -- see the
       -- matching skips further down. What is behind them is the sky the
@@ -677,19 +678,19 @@ function BattleScene.render(state, arena, textures, token)
       -- not dim it. Most visible on the white arena fill, where a darkened
       -- card would read wrong; but it is flat/full-bright everywhere. SHADED
       -- (the default) keeps the tints and its own shadow, as intended.
-      local unlit = UiBackplates.spritesUnlit()
+    --  local unlit = UiBackplates.spritesUnlit()
       local savedTint = Voxel3D.tint
-      if unlit then
-        Voxel3D.tint = { 1, 1, 1 }
-        Voxel3D.dayTint({ 1, 1, 1 })
-      end
+      -- if unlit then
+      --   Voxel3D.tint = { 1, 1, 1 }
+      --   Voxel3D.dayTint({ 1, 1, 1 })
+      -- end
       Voxel3D.draw(BattleBillboard.mesh(), card.tex, card.model,
                    BattleBillboard.PULL,
-                   unlit and nil or ShadowMap.snug(card.model))
-      if unlit then
-        Voxel3D.tint = savedTint
-        Voxel3D.dayTint()
-      end
+                   nil or ShadowMap.snug(card.model))
+      -- if unlit then
+      --   Voxel3D.tint = savedTint
+      --   Voxel3D.dayTint()
+      -- end
       if card.noDayTint then Voxel3D.dayTint() end
     end
     Voxel3D.glass(true)
@@ -708,7 +709,8 @@ function BattleScene.render(state, arena, textures, token)
     -- gives them, measured against THIS camera's pitch rather than the
     -- orbit's -- there is no character here for them to overdraw, but the
     -- pull is also what keeps a tuft from z-fighting the floor it stands on
-    if not whiteFill and not discs then
+    --if not whiteFill and not discs then
+    if not discs then
       local pull = VoxelScene.pull(math.max(pitch, 0.05))
       Voxel3D.draw(ChunkMesher.grass(host), atlasFor(host), nil, pull)
       for _, nb in ipairs(neighbors) do

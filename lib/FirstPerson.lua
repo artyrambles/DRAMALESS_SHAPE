@@ -761,13 +761,17 @@ function FirstPerson.install()
   -- pressed is remembered per button, so the release always reaches the
   -- overlay even if the capture ended while the button was down --
   -- otherwise a click that outlives the rung strands A held forever.
+  --
+  -- HORDE MODE re-reads the same two buttons as a weapon: left fires,
+  -- right holds the sights. Claimed BEFORE the A/B mapping below rather
+  -- than on top of it, so a click during the mode never also lands as a
+  -- GB button -- otherwise the A that ends the GAME OVER card would be
+  -- spent by the shot that ended the run.
   local mouseHeld = {}
   local MOUSE_BTN = { [1] = "a", [2] = "b" }
-
   do
     local inner = love.mousepressed
     love.mousepressed = function(x, y, button, istouch, presses)
-    --  if captured and not istouch then return end
       if captured and not istouch and MOUSE_BTN[button] then
         local Input = require("src.core.Input")
         mouseHeld[button] = true
@@ -780,7 +784,8 @@ function FirstPerson.install()
   do
     local inner = love.mousereleased
     love.mousereleased = function(x, y, button, istouch, presses)
-      -- a release always reaches whoever owns the press
+      -- a release always reaches whoever owns the press: the horde's
+      -- aim-hold has to let go even if the mode ended mid-click
       if not mouseHeld[button] then return end
       if mouseHeld[button] then
         local Input = require("src.core.Input")
