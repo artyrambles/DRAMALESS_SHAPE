@@ -12,10 +12,10 @@
 --      full voxel one. Works with SHADED or UNLIT sprites (UNLIT just keeps
 --      the cards brighter on white).
 --
---   A) TEXTBOX FILL was dropped: the battle box is now ALWAYS an opaque white
---      panel with black ink (the same as the overworld / trainer-intro
---      textbox), so there is no HALF / OFF toggle to manage. See
---      BattleState:drawTextArea in OverworldBattle.lua.
+--   A) TEXTBOX FILL  WHITE / HALF / BLACK / OFF
+--      Controls the engine's own battle-box paper at draw time. Because the
+--      fill, border and ink stay in the same 160x144 UI canvas, BATTLE SIZE
+--      FIXED and FILL transform them together and the corners stay aligned.
 
 -- Each is a ModSetting: it gets an OPTIONS-menu row and a mod-manager schema
 -- for free, and persists under options.modOptions.BATTLE_ART_VOXEL_FORK like the
@@ -31,8 +31,8 @@ local UiBackplates = {}
 
 -- ------- C) SPRITE LIGHT -------
 
- UiBackplates.spriteLight = ModSetting.new("spriteLight", "SPRITE LIGHT",
-   { "SHADED", "UNLIT" }, { "SHADED", "UNLIT" })
+UiBackplates.spriteLight = ModSetting.new("spriteLight", "SPRITE LIGHT",
+  { "SHADED", "UNLIT" }, { "SHADED", "UNLIT" })
 
 -- Whether the mon cards should be drawn flat and full bright (UNLIT) rather
 -- than receiving the world's day tint and shadows (SHADED). ARENA FILL: WHITE
@@ -41,7 +41,28 @@ local UiBackplates = {}
 -- regardless of the SPRITE LIGHT setting.
 function UiBackplates.spritesUnlit()
   if UiBackplates.arenaWhite() then return true end
-  return false
+  return UiBackplates.spriteLight:get() == "UNLIT"
+end
+
+-- ------- HUD COLOR -------
+
+-- COLOR keeps the engine's black HUD glyphs and green/yellow/red HP bars,
+-- adding a bright one-pixel shadow so they remain legible over terrain.
+-- INVERTED is the established fork presentation: white ink with a dark
+-- shadow. COLOR comes first because it is the fresh-install default used by
+-- the other forks. A white arena must use black ink regardless of the saved
+-- choice or the HUD would disappear into its background.
+UiBackplates.hudColor = ModSetting.new("hudColor", "HUD COLOR",
+  { "COLOR", "INVERTED" }, { "COLOR", "INVERTED" })
+
+function UiBackplates.hudUsesColor()
+  return UiBackplates.arenaWhite()
+         or UiBackplates.hudColor:get() == "COLOR"
+end
+
+function UiBackplates.hudUsesColorShadow()
+  return not UiBackplates.arenaWhite()
+         and UiBackplates.hudColor:get() == "COLOR"
 end
 
 -- ------- B) ARENA FILL -------
@@ -56,11 +77,29 @@ function UiBackplates.arenaWhite()
   return UiBackplates.arenaFill:get() == "WHITE"
 end
 
--- ------- the backplate is applied in OverworldBattle.drawTextArea
---
--- The battle box is ALWAYS drawn as an opaque white panel with black ink by
--- BattleState:drawTextArea (see whiteBoxFill there). TEXTBOX FILL was dropped
--- because the white panel is the one predictable backplate that matches the
--- overworld / trainer-intro textbox and never produces white-on-white.
+-- ------- A) TEXTBOX FILL -------
+
+UiBackplates.textboxFill = ModSetting.new("textboxFill", "TEXTBOX FILL",
+  { "WHITE", "HALF", "BLACK", "OFF" },
+  { "WHITE", "HALF", "BLACK", "OFF" })
+
+-- ARENA FILL: WHITE keeps the latest-build presentation: black ink on opaque
+-- paper. On the 3D arena, the player's explicit textbox choice owns the box.
+function UiBackplates.textboxMode()
+  if UiBackplates.arenaWhite() then return "WHITE" end
+  return UiBackplates.textboxFill:get()
+end
+
+function UiBackplates.textboxFillStyle()
+  local mode = UiBackplates.textboxMode()
+  if mode == "WHITE" then return { 1, 1, 1, 1 } end
+  if mode == "HALF" then return { 0, 0, 0, 0.30 } end
+  if mode == "BLACK" then return { 0, 0, 0, 1 } end
+  return nil
+end
+
+function UiBackplates.textboxUsesWhiteInk()
+  return UiBackplates.textboxMode() ~= "WHITE"
+end
 
 return UiBackplates

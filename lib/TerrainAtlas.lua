@@ -442,6 +442,94 @@ end
 
 TerrainAtlas._animFrame = animFrame   -- named for the suite
 
+-- Greatest-common-divisor / least-common-multiple for one animation cycle.
+local function gcd(a, b)
+  while b ~= 0 do a, b = b, a % b end
+  return a
+end
+
+local function lcm(a, b)
+  if a == 0 or b == 0 then return 0 end
+  return math.floor(a / gcd(a, b) * b)
+end
+
+-- A collision-free key for all animated specs at one engine animation frame.
+local function stateKey(entry, frame)
+  local parts = {}
+  for i, spec in ipairs(entry.specs) do
+    local n = spec.kind == "hshift" and #spec.offsets or #spec.sequence
+    parts[i] = tostring(math.floor(frame / (spec.period or 20)) % n)
+  end
+  return table.concat(parts, ":")
+end
+
+-- Prebuild immutable whole-atlas textures for every distinct state in the
+-- combined cycle. The vanilla water+flower cycle is only eight states
+-- (160 logic frames / period 20), so this is tiny compared with the voxel
+-- render targets and, crucially, performs ZERO GPU texture mutation while
+-- the player is moving around.
+local MAX_CYCLE_FRAMES = 4096
+local MAX_PREBUILT_STATES = 64
+
+local function releaseFrameImages(entry)
+  local released = {}
+  for _, image in pairs((entry and entry.frames) or {}) do
+    if image and not released[image] and image.release then
+      released[image] = true
+      pcall(image.release, image)
+    end
+  end
+end
+
+local function buildAnimationFrames(entry)
+  local cycle = 1
+  for _, spec in ipairs(entry.specs) do
+    local n = spec.kind == "hshift" and #spec.offsets or #spec.sequence
+    cycle = lcm(cycle, (spec.period or 20) * n)
+    if cycle > MAX_CYCLE_FRAMES then return false end
+  end
+
+  local representative = {}
+  local stateCount = 0
+  for frame = 0, cycle - 1 do
+    local key = stateKey(entry, frame)
+    if representative[key] == nil then
+      representative[key] = frame
+      stateCount = stateCount + 1
+      if stateCount > MAX_PREBUILT_STATES then return false end
+    end
+  end
+
+  local ok = pcall(function()
+    for key, frame in pairs(representative) do
+      local data = love.image.newImageData(entry.width, entry.height)
+      data:paste(entry.base, 0, 0, 0, 0, entry.width, entry.height)
+
+      for _, spec in ipairs(entry.specs) do
+        local n = spec.kind == "hshift" and #spec.offsets or #spec.sequence
+        patch(data, entry, spec,
+              math.floor(frame / (spec.period or 20)) % n)
+      end
+
+      local image = love.graphics.newImage(data)
+      image:setFilter("nearest", "nearest")
+      entry.frames[key] = image
+    end
+  end)
+  if not ok then
+    -- A context loss or allocation failure can arrive halfway through the
+    -- cycle. Do not leak the states that were already made while animate()
+    -- retries the transient failure on a later frame.
+    releaseFrameImages(entry)
+    entry.frames = {}
+    return nil
+  end
+
+  entry.frameCount = stateCount
+  entry.cycleFrames = cycle
+  return stateCount > 0
+end
+
 -- false = this can never work and asking again is waste; nil = it did not
 -- work THIS time and might next. The caller latches the first and retries
 -- the second (see attemptFailed).
@@ -450,8 +538,8 @@ local function newEntry(map, base, baked)
   local specs = specsFor(tileset)
   if not specs then return false end        -- nothing on this tileset animates
   if not (love.image and love.image.newImageData
-          and base.replacePixels) then
-    return false                            -- no pixel access on this machine
+          and love.graphics and love.graphics.newImage) then
+    return false                            -- no pixel/texture access on this machine
   end
   -- the pixels the atlas texture was built from: our own SGB bake when we
   -- made one, else whatever the engine's renderer is drawing with. A
@@ -468,10 +556,17 @@ local function newEntry(map, base, baked)
     -- twice over there and corrupt every still frame of it.
     local data = love.image.newImageData(w, h)
     data:paste(src, 0, 0, 0, 0, w, h)
-    local image = love.graphics.newImage(data)
-    image:setFilter("nearest", "nearest")
-    local e = { base = src, data = data, image = image, specs = specs,
-                perRow = tileset.tilesPerRow or 16, step = nil }
+    -- v1.7.8 deliberately does NOT create a mutable texture here.
+    -- Profiling showed that even tiny replacePixels uploads landed in the
+    -- exact ~3 Hz frames where the game stalled for ~50 ms. Instead we keep
+    -- the CPU base and prebuild every animation state as an immutable texture
+    -- once. Runtime animation becomes pointer selection only.
+    local e = {
+      base = src,
+      specs = specs, perRow = tileset.tilesPerRow or 16,
+      frames = {}, frameCount = 0, step = nil, image = nil,
+      width = w, height = h,
+    }
     -- the frame files are raw grayscale; learn what the atlas did to the
     -- tile each one stands in for, so they land on the same colours
     local recolored = baked or (map.renderer and map.renderer.gbcAtlas)
@@ -506,15 +601,31 @@ local function newEntry(map, base, baked)
         end
       end
     end
+
+    local built = buildAnimationFrames(e)
+    if built ~= true then return built end
+    -- Start on the engine's current animation state; animate() will refresh
+    -- this pointer each call without touching GPU pixels.
+    e.image = e.frames[stateKey(e, animFrame())]
     return e
   end)
-  return (ok and entry) or false
+  -- An exception during pixel decoding or texture creation can be a context
+  -- transition and is retryable. The permanent `false` verdicts were already
+  -- returned before the protected build (no animation or no GPU API).
+  if not ok then return nil end
+  return entry
 end
 
--- The atlas for this frame: the static one when nothing on this tileset
--- animates (or anything at all goes wrong), else a private copy with the
--- animated slots rewritten to the current step. Repatched only when the
--- step actually changes -- three times a second, ~130 pixels of work.
+-- Runtime animation is pointer-only from here on.
+
+local function releaseAnimatedEntry(entry)
+  if not entry then return end
+  releaseFrameImages(entry)
+end
+
+-- The atlas for this frame: the static one when nothing animates (or a
+-- prebuild is impossible), otherwise one immutable prebuilt animation frame.
+-- No replacePixels / texture upload happens here.
 function TerrainAtlas.animate(map, colors, base, baked)
   -- RED++ bakes a per-MAP atlas, so its animated copy is per map too and
   -- has to be evicted with the meshes (setLive below); the shared paths key
@@ -538,34 +649,19 @@ function TerrainAtlas.animate(map, colors, base, baked)
   if not entry then return nil end
 
   local frame = animFrame()
-  -- one number for the whole entry: every spec's own step, folded together,
-  -- so a repatch happens when ANY of them turns over
-  local step = 0
-  for i, spec in ipairs(entry.specs) do
-    local n = spec.kind == "hshift" and #spec.offsets or #spec.sequence
-    step = step + (math.floor(frame / (spec.period or 20)) % n) * (16 ^ i)
-  end
+  local step = stateKey(entry, frame)
   if step ~= entry.step then
     entry.step = step
-    local ok = pcall(function()
-      for _, spec in ipairs(entry.specs) do
-        local n = spec.kind == "hshift" and #spec.offsets or #spec.sequence
-        patch(entry.data, entry, spec,
-              math.floor(frame / (spec.period or 20)) % n)
-      end
-      entry.image:replacePixels(entry.data)
-    end)
-    if not ok then
-      -- drop the entry rather than condemning the key: the next frame
-      -- rebuilds and tries again, and attemptFailed gives up eventually
-      animated[key] = attemptFailed(key)
+    entry.image = entry.frames[step]
+    if not entry.image then
+      -- A custom animation exceeded/escaped the prebuilt cycle. Prefer the
+      -- static atlas to a runtime upload hitch.
       return nil
     end
   end
-  -- Only a frame that got all the way here counts as healthy. Clearing the
-  -- budget on a successful BUILD instead would never let it run out: an
-  -- entry that builds fine and fails on upload would rebuild every frame,
-  -- forever, which is worse than either animating or giving up.
+  -- Only a frame that got all the way here counts as healthy. A partial or
+  -- failed prebuild keeps its retry budget until an immutable state can
+  -- actually be selected.
   if attempts[key] then attempts[key] = nil end
   return entry.image
 end
@@ -623,9 +719,7 @@ end
 function TerrainAtlas.setLive(live)
   for key, entry in pairs(animated) do
     if entry and entry.mapId and not live[entry.mapId] then
-      if entry.image and entry.image.release then
-        pcall(entry.image.release, entry.image)
-      end
+      releaseAnimatedEntry(entry)
       animated[key] = nil
     end
   end
@@ -636,9 +730,7 @@ function TerrainAtlas.invalidate()
   cacheData = {}
   attempts = {}
   for _, entry in pairs(animated) do
-    if entry and entry.image and entry.image.release then
-      pcall(entry.image.release, entry.image)
-    end
+    releaseAnimatedEntry(entry)
   end
   animated = {}
 end

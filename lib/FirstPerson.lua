@@ -110,6 +110,15 @@ FirstPerson.yaw = 0
 FirstPerson.pitch = FirstPerson.PITCH_DEFAULT
 FirstPerson.blend = 0
 
+-- The last-known free-roam attitude, captured WHILE the freecam is engaged
+-- (see update) and held after it is dropped. The staged battle seeds its
+-- camera from these so it opens where the player was last looking -- NOT
+-- from the live FirstPerson numbers, which are stale (the freecam is not
+-- driving during a battle) and which reset to the sprite facing on the
+-- frame the rung is re-entered. Nil until the freecam has actually run.
+FirstPerson.lastYaw = nil
+FirstPerson.lastPitch = nil
+
 -- A multiplier on the first-person field of view, for anything that wants
 -- to narrow the lens without owning the rig: 1 is the ordinary 65
 -- degrees, and horde mode's iron sights ease it down toward 40 while the
@@ -474,6 +483,16 @@ function FirstPerson.update(dt)
     FirstPerson.pitch = FirstPerson.PITCH_DEFAULT
   end
   wasEngaged = engagedNow
+
+  -- Capture the live attitude into the last-known record WHILE the rung is
+  -- engaged AND continuing (not on the entry frame): the entry frame resets
+  -- yaw/pitch to the sprite facing (above), so writing lastYaw there would
+  -- throw away the position the player had last time. Held after the rung
+  -- is dropped, so the staged battle can seed from it later.
+  if engagedNow and wasEngaged then
+    FirstPerson.lastYaw = FirstPerson.yaw
+    FirstPerson.lastPitch = FirstPerson.pitch
+  end
 
   -- the blend, held at flat until there is terrain to dive into -- the
   -- same wait Voxel.update keeps for the orbit tween, for the same reason

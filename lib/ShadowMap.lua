@@ -29,7 +29,7 @@ local V = ...
 
 local Mat4 = V.require("Mat4")
 local Voxel = V.require("VoxelState")
-local Quality = V.require("Quality")
+local Shadows = V.require("Shadows")
 
 local ShadowMap = {}
 
@@ -64,9 +64,9 @@ ShadowMap.KZ = -0.55      -- north drift per pixel of height
 -- to keep crisp, and finer buys nothing the grid can show. The smallest
 -- size that meets it wins, and the ladder tops out at 2048 (16 MB, and the
 -- depth buffer behind it matches) rather than chasing the target forever.
-ShadowMap.SIZES = { 256, 512, 1024, 2048 }
+ShadowMap.SIZES = { 1024, 1536, 2048 }
 ShadowMap.TARGET = 0.45
-ShadowMap.res = 512    -- the rung in use; read by the main pass's filter
+ShadowMap.res = 1024      -- the rung in use; read by the main pass's filter
 
 -- The tallest geometry the pass covers: gabled buildings and border forest
 -- run well under this, and the margin it buys costs only resolution --
@@ -124,9 +124,11 @@ local SHADER = [[
   uniform mat4 model;
   vec4 position(mat4 transform_projection, vec4 vertex_position) {
     vec4 c = lightVP * (model * vertex_position);
-    // the projection is orthographic, so w is 1 and clip z IS the depth,
-    // linear in world units along the sun line
-    vDepth = c.z * 0.5 + 0.5;
+    // the projection is orthographic (w is 1) and fit() maps clip z onto
+    // [0,1] directly (see Z01 there), so clip z IS the stored depth,
+    // linear in world units along the sun line -- under every clip-range
+    // convention a backend can bring
+    vDepth = c.z;
     return c;
   }
 #endif
@@ -160,11 +162,52 @@ local prevBlend, prevAlphaMode = nil, nil
 local IDENTITY = Mat4.identity()
 
 -- world -> [0,1] cube, applied on top of the clip matrix: the main pass
--- samples the map with the xy and compares against the z
-local TO_UNIT = { 0.5, 0, 0, 0.5,
-                  0, 0.5, 0, 0.5,
-                  0, 0, 0.5, 0.5,
-                  0, 0, 0, 1 }
+-- samples the map with the xy and compares against the z.
+--
+-- The V ROW's sign is the RUNTIME's to answer, which is why this is a
+-- function rather than a constant. This pass bypasses transform_projection
+-- -- the one seam where LOVE reconciles clip conventions -- and LOVE 12
+-- changed them out from under it: clip-space output is y-up there, canvas
+-- or no canvas, on every backend (the 12.0 changelog says it in as many
+-- words). So a draw this pass stores lands with clip +y at texture v 1
+-- under LOVE 11 and at v 0 under LOVE 12, and the reader's v must run the
+-- way the writer's rows actually landed or every lookup reads the map
+-- VERTICALLY MIRRORED -- the far half of the frustum's shadows stamped
+-- across the near field. probeVSign() below measures which world this is
+-- once, with a real draw, instead of trusting a version or platform list.
+--
+-- The z row is identity: fit() already maps clip z onto [0,1] (see Z01).
+local function toUnit(vSign)
+  return { 0.5, 0, 0, 0.5,
+           0, 0.5 * vSign, 0, 0.5,
+           0, 0, 1, 0,
+           0, 0, 0, 1 }
+end
+
+-- Clip z from GL's [-1,1] onto [0,1], multiplied onto the projection.
+-- Mat4.ortho emits the legacy GL range, and under LOVE 12 the sun pass
+-- keeps only what lands in [0,1]: without this the map comes back with
+-- the near half of the light frustum simply MISSING -- large regions
+-- holding nothing but the clear, cut along the straight lines where the
+-- z = 0 plane crosses the terrain mesh, and every texel that did survive
+-- packing a high byte at or above 128. Measured, not reasoned: this one
+-- matrix is the difference between that half-empty map and a full one on
+-- both of LOVE 12's backends, with everything else held still. (The
+-- camera never shows the same wound because its projection is
+-- perspective and everything it can see sits past the crossover at twice
+-- the near plane; the ortho here is linear, so it loses exactly half.)
+-- [0,1] sits inside the legacy clip volume too, so the one matrix serves
+-- LOVE 11 and 12 alike; the PACKED depth the reader compares is
+-- bit-identical to what the old scheme packed (vDepth reads clip z
+-- directly now), and only the throwaway hardware depth attachment loses
+-- range it never used.
+local Z01 = { 1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 0.5, 0.5,
+              0, 0, 0, 1 }
+
+-- +1 = LOVE 11 storage orientation, -1 = LOVE 12's; nil until probed
+local vSign = nil
 
 -- world -> light clip space, for the pass that FILLS the map
 ShadowMap.clipVP = IDENTITY
@@ -218,23 +261,65 @@ local function getBlank()
   return blank or nil
 end
 
+-- Which way a bypass-projection draw lands in a canvas on THIS runtime,
+-- measured rather than assumed: draw the half of clip space above y = 0
+-- through the pass's own shader and transforms, and ask which rows of the
+-- readback it wrote. The LOVE 11 calibration everything shipped on stores
+-- that half in the image's TOP rows; LOVE 12's y-up convention stores it
+-- in the BOTTOM ones. Any failure answers +1 -- the convention every
+-- platform ran until now -- so a driver that refuses the readback merely
+-- keeps the behaviour it had.
+local function probeVSign()
+  local done, sign = pcall(function()
+    local sh = getShader()
+    local tex = getBlank()
+    if not (sh and tex) then return 1 end
+    -- dpiscale 1: the readback below indexes rows of the IMAGE, and a
+    -- dpi-scaled canvas would hand back more of them than it was asked for
+    local c = love.graphics.newCanvas(4, 4, { dpiscale = 1 })
+    -- the quad IS clip space: standard mesh, positions already in clip
+    -- units, uv pointed at the 1x1 blank so the alpha discard passes
+    local mesh = love.graphics.newMesh(
+      { { -1, 0, 0, 0 }, { 1, 0, 1, 0 }, { 1, 1, 1, 1 }, { -1, 1, 0, 1 } },
+      "fan", "static")
+    mesh:setTexture(tex)
+    love.graphics.setCanvas(c)
+    love.graphics.clear(1, 1, 0, 1)
+    love.graphics.setShader(sh)
+    love.graphics.setColor(1, 1, 1, 1)
+    -- the production writer's own frame -- the y-flip and the z packing --
+    -- with no view or ortho underneath
+    pcall(sh.send, sh, "lightVP", "row",
+          Mat4.mul(Z01, Mat4.scale(1, -1, 1)))
+    pcall(sh.send, sh, "model", "row", IDENTITY)
+    pcall(sh.send, sh, "sprite", 0)
+    love.graphics.draw(mesh)
+    love.graphics.setShader()
+    love.graphics.setCanvas()
+    local data = c:newImageData()
+    local w, h = data:getDimensions()
+    -- written texels carry packed depth 0.5 (red ~0.5); the clear is red 1
+    local topR = data:getPixel(1, 0)
+    local botR = data:getPixel(1, h - 1)
+    if topR < 0.9 and botR > 0.9 then return 1 end
+    if botR < 0.9 and topR > 0.9 then return -1 end
+    return 1
+  end)
+  return (done and sign) or 1
+end
+
 -- Whether the sun pass can run at all. False headless, without shaders, or
 -- where the canvas cannot be made -- VoxelScene then keeps the flat decal
 -- shadows, which need nothing but a quad.
 function ShadowMap.available()
-  -- SHADOWS OFF answers here rather than at the call sites, so it takes
-  -- exactly the same route a driver without a depth canvas takes: the sun
-  -- pass never begins and VoxelScene falls back to the flat decal shadows
-  -- it already carries for that case. One path, already written and
-  -- already tested, instead of a second way of having no shadow map.
-  if Quality.shadowsOff() then return false end
+  if Shadows.off() then return false end
   if not (love.graphics and love.graphics.newCanvas
           and love.graphics.setDepthMode) then
     return false
   end
   -- the smallest rung is enough to answer the question; fit() picks the
   -- one this frame actually wants
-  return getShader() ~= nil and getCanvas(Quality.shadowSizes()[1]) ~= nil
+  return getShader() ~= nil and getCanvas(ShadowMap.SIZES[1]) ~= nil
 end
 
 -- The map to sample, or the blank stand-in. Never nil once the main pass
@@ -246,15 +331,17 @@ function ShadowMap.texture()
 end
 
 -- True while the map holds a frame the main pass can read.
---
--- Gated on the setting too, and it has to be: `ready` is sticky, so a
--- player who turns SHADOWS to OFF mid-walk would otherwise leave the last
--- map they drew standing -- the scene shader would keep sampling it and
--- the world would wear one frozen frame of shadows forever, while the
--- decal fallback ALSO drew because castShadows had stopped running.
 function ShadowMap.active()
-  if Quality.shadowsOff() then return false end
+  if Shadows.off() then return false end
   return ready and canvas ~= nil and canvas ~= false
+end
+
+-- Stop exposing the last completed map without releasing its GPU storage.
+-- A flat battle arena has no world surface to shade, so keeping a previous
+-- map bound can only let shadows leak onto its Pokemon cards. The next real
+-- scene sees no signature and recasts normally into the retained canvas.
+function ShadowMap.discard()
+  ready, lastSig = false, nil
 end
 
 -- The direction the light TRAVELS, normalized. The shear is the shadow a
@@ -277,9 +364,9 @@ ShadowMap.sunDir = sunDir
 -- eases them out rather than the frustum ending on a hard line.
 ShadowMap.FAR_CAP = 2.5     -- multiples of the view height
 
-local function groundReach(vh, capMul)
+local function groundReach(vh)
   local a = Voxel.angle or 0
-  local cap = (capMul or ShadowMap.FAR_CAP) * vh
+  local cap = ShadowMap.FAR_CAP * vh
   -- half the vertical field of view: the same FOCAL the camera projects
   -- with, so the two frusta agree about what is on screen
   local half = math.atan(1 / (2 * Voxel.FOCAL))
@@ -289,11 +376,6 @@ local function groundReach(vh, capMul)
   local horizon = dist * math.cos(a) / math.tan(below)
   return math.max(vh / 2, math.min(cap, horizon - dist * math.sin(a)))
 end
-
--- shared with VoxelScene, which fits its own culling box to the same
--- question this answers: how far north of the view centre is there still
--- ground worth drawing
-ShadowMap.groundReach = groundReach
 
 -- Fit the light frustum to the ground the camera can see, plus the margin
 -- the casters for it stand in.
@@ -346,11 +428,9 @@ local function fit(cx, cy, vw, vh)
 
   -- pick the resolution rung: the smallest that resolves TARGET world
   -- pixels per texel across the wider side, else the largest there is
-  local sizes = Quality.shadowSizes()
-  local target = Quality.shadowTarget()
-  local res = sizes[#sizes]
-  for _, size in ipairs(sizes) do
-    if math.max(w, h) / size <= target then
+  local res = ShadowMap.SIZES[#ShadowMap.SIZES]
+  for _, size in ipairs(ShadowMap.SIZES) do
+    if math.max(w, h) / size <= ShadowMap.TARGET then
       res = size
       break
     end
@@ -374,9 +454,12 @@ local function fit(cx, cy, vw, vh)
   -- without this the map is stored upside down relative to the uv the
   -- main pass reads it with
   proj = Mat4.mul(Mat4.scale(1, -1, 1), proj)
+  -- and clip z onto [0,1] -- see Z01 for why this is load-bearing under
+  -- LOVE 12 and free under LOVE 11
+  proj = Mat4.mul(Z01, proj)
 
   ShadowMap.clipVP = Mat4.mul(proj, view)
-  ShadowMap.uvVP = Mat4.mul(TO_UNIT, ShadowMap.clipVP)
+  ShadowMap.uvVP = Mat4.mul(toUnit(vSign or 1), ShadowMap.clipVP)
   -- what the frustum ended up covering, for probes: the lateral extent in
   -- world pixels divided by RES is how fine a shadow edge can land
   ShadowMap.extent = { r - l, t - b, far - near }
@@ -387,42 +470,6 @@ local function fit(cx, cy, vw, vh)
   -- the stored depth spans the frustum, so a world-pixel bias is that
   -- fraction of it
   ShadowMap.bias = ShadowMap.slack / math.max(1, far - near)
-end
-
--- ------- how big the sun is
---
--- The tangent of the sun's apparent half-angle, which is the one number
--- that decides how fast a shadow's edge widens with distance from what
--- throws it. The real sun's is 0.0047 -- a shadow twenty world pixels off
--- its blocker would soften by a tenth of a pixel, which is nothing on a
--- grid this coarse. So this is a stylised sun, wide enough that a
--- character's head reads softer than their feet at the scale a map cell
--- actually is, and no wider: past this the shadow of a building stops
--- having an edge at all and starts being a gradient.
---
--- Only SHADOWS SOFT reads it (the PCSS branch of the scene shader); every
--- other rung has one fixed edge width and no use for a sun with a size.
-ShadowMap.SUN_SPREAD = 0.05
-
--- Texels of half-shadow per unit of STORED DEPTH between blocker and
--- receiver -- the whole conversion the soft-shadow filter needs, worked out
--- here because all three terms in it live here:
---
---   the stored depth is a fraction of the frustum's own depth, so a unit of
---   it is `extent[3]` world pixels;
---   a world pixel is `res / max(extent[1], extent[2])` texels;
---   and the sun's size turns a world-pixel gap into a world-pixel penumbra.
---
--- Recomputed whenever fit() runs, which is whenever anything the frustum
--- depends on moved. Before the first fit it answers a serviceable constant
--- rather than nil: the shader gets a number every frame either way.
-function ShadowMap.softness()
-  local e = ShadowMap.extent
-  if not e then return 8 end
-  local span = e[3] or 400
-  local texel = math.max(e[1] or 400, e[2] or 400) / math.max(1, ShadowMap.res)
-  if texel <= 1e-4 then return 8 end
-  return span * ShadowMap.SUN_SPREAD / texel
 end
 
 -- How much of the compare's forgiveness a snugged caster takes back, 0..1.
@@ -474,17 +521,8 @@ end
 -- everything the pass depends on (camera, terrain meshes, every pose). A
 -- frame that changes none of it reuses the map it already has, which is
 -- most of a dialog, a menu or any moment standing still.
-local deferred = 0
-
 function ShadowMap.stale(sig)
-  if not ready then return true end
-  if sig == lastSig then return false end
-  local every = Quality.shadowInterval()
-  if every > 1 then
-    deferred = deferred + 1
-    if deferred < every then return false end
-  end
-  return true
+  return not ready or sig ~= lastSig
 end
 
 -- Begin the sun pass. Returns false when it could not start, in which case
@@ -492,6 +530,12 @@ end
 function ShadowMap.begin(cx, cy, vw, vh)
   local sh = getShader()
   if not sh then return false end
+  -- the runtime's storage orientation, measured once before the first map
+  -- is fitted (see probeVSign); exposed for the probes and the suite
+  if vSign == nil then
+    vSign = probeVSign()
+    ShadowMap.vSign = vSign
+  end
   -- fit first: it is what decides which resolution rung this view wants
   fit(cx, cy, vw, vh)
   local c = getCanvas(ShadowMap.res)
@@ -506,7 +550,6 @@ function ShadowMap.begin(cx, cy, vw, vh)
   -- was drawn into can never shadow anything
   love.graphics.clear(1, 1, 0, 1, true, true)
   love.graphics.setDepthMode("lequal", true)
--- setting this to back instead puts holes in the shadows
   love.graphics.setMeshCullMode("none")
   -- replace, not alpha blend: these are packed numbers, not colors
   love.graphics.setBlendMode("replace", "premultiplied")
@@ -562,14 +605,12 @@ function ShadowMap.finish(sig)
   love.graphics.setColor(1, 1, 1, 1)
   lastSig = sig
   ready = true
-  deferred = 0
 end
 
 -- Drop the GPU objects (window resize, hot reload).
 function ShadowMap.invalidate()
   canvas, canvasRes, blank = nil, 0, nil
   drawing, ready, lastSig = false, false, nil
-  deferred = 0
 end
 
 return ShadowMap

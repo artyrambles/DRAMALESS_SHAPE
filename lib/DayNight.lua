@@ -460,13 +460,22 @@ end
 local TOD = { day = "DAY", golden = "DAY", night = "NIGHT",
               violet = "NIGHT", dawn = "MORNING", dusk = "EVENING" }
 
+local todCacheT, todCacheValue = nil, nil
+
 function DayNight.tod(t)
-  local mix = DayNight.mix(t or DayNight.time())
+  t = t or DayNight.time()
+  -- world.tod can be queried dozens of times by palette consumers in one
+  -- rendered frame. The clock value is identical for those queries, so keep
+  -- the exact answer instead of rebuilding a phase-weight table every time.
+  if t == todCacheT then return todCacheValue end
+  local mix = DayNight.mix(t)
   local best, bestW = "day", -1
   for name, w in pairs(mix) do
     if w > bestW then best, bestW = name, w end
   end
-  return TOD[best] or "DAY"
+  todCacheT = t
+  todCacheValue = TOD[best] or "DAY"
+  return todCacheValue
 end
 
 -- ------- persistence

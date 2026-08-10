@@ -2225,6 +2225,43 @@ function Structures.buildVolume(S, map, tiles)
   -- whether the region's dominant columns are flat repeats (a cliff
   -- mound's plateau) rather than drawn facades (a house's front)
   local modeRepeat = (repeatVotes[modeH] or 0) * 2 > modeN
+
+  -- Whether this REGION's tops are a rim over a uniform body -- what every
+  -- cliff mound is drawn as: a top edge, then the same rock the whole way
+  -- down. The top face may then lay that rim once along its north edge and
+  -- hold the body after it, instead of cycling the rim back every second
+  -- tile and striping a plateau with edges it should not have.
+  --
+  -- Answered per column AND per region, because each catches what the
+  -- other misses. A mound is one structure many columns wide, and the
+  -- columns carrying its cave mouth read differently from their neighbours
+  -- (their drawing ends in the mouth's own tiles): per column alone, those
+  -- kept cycling while the rest held, leaving rim stubs above the doorway.
+  -- But a region vote alone silences a genuine rim-over-body column that
+  -- happens to stand in a region of repeating art -- three of them in the
+  -- Safari Zone. A column holds if EITHER says so.
+  --
+  -- Art that genuinely repeats is not uniform and keeps cycling: the
+  -- Safari Zone's fence alternates two tiles the whole way down, and there
+  -- the repeat IS what the drawing says.
+  local uniformVotes, uniformTotal = 0, 0
+  for _, r in ipairs(runs) do
+    local run = r.run
+    if run.extent > 2 then
+      uniformTotal = uniformTotal + 1
+      local body = map:tileAt(r.tx, run.north + 1)
+      local uniform = true
+      for d = 2, run.extent - 1 do
+        if map:tileAt(r.tx, run.north + d) ~= body then
+          uniform = false
+          break
+        end
+      end
+      run.ownUniform = uniform
+      if uniform then uniformVotes = uniformVotes + 1 end
+    end
+  end
+  local regionUniform = uniformTotal > 0 and uniformVotes * 2 > uniformTotal
   for _, r in ipairs(runs) do
     local run = r.run
     local h = run.unit * 8
@@ -2272,6 +2309,7 @@ function Structures.buildVolume(S, map, tiles)
     run.rise = roofRows * 8
     run.peak = h
     run.h = h - run.rise               -- facade height: what sides build to
+    run.topUniform = run.ownUniform or regionUniform
     for ty = run.north, run.front do
       S.runs[keyOf(r.tx, ty)] = run
     end
@@ -3289,83 +3327,6 @@ end
 
 -- ---- tall grass ----
 
--- ---- closing a standee's sides ----
---
--- The grass tufts and the flowers are both built the same way: each row of
--- the 8x8 drawing becomes a horizontal RUN of lit pixels, stood up as a
--- front face and a back face one voxel apart, with a lid on top. What that
--- leaves open is the two ENDS of every run -- so the slab was a pair of
--- billboards rather than a solid, and from any angle off square you looked
--- in through the edge and straight out the other side. At the low cameras
--- this mod has grown (1ST, 3RD, the battle's floor-level seat) that is
--- most of the time.
---
--- A wall goes on an end only where the pixel beyond it is actually clear,
--- which for a run's end it is by construction -- except where two runs on
--- the same row meet across a gap of nothing, which cannot happen, and at
--- the tile's border, where the neighbouring tile's own standee may or may
--- not continue the shape. The border is closed anyway: tufts sit on their
--- own half-cells with a gap between them, so an open border edge is a hole
--- in the open, not a seam with anything.
---
--- Each wall samples ONE texel at its centre -- the end pixel it is closing
--- off -- so it wears that pixel's own colour, which is the nearest coloured
--- pixel to the surface being filled. Sampling a single texel is also what
--- carries the animation: when a frame keys that pixel out, the wall's own
--- fragments discard with the faces either side of it, so a swaying tuft
--- never leaves a wall standing where its blade no longer is.
--- `everyPixel` is for a standee whose silhouette ANIMATES. The mesh is
--- built once, over the UNION of every frame's mask, and each frame is cut
--- out again in texture space -- so a run that is six pixels wide in the
--- union may be two pixels wide in the frame on screen, and the four pixels
--- that dropped out took the union's end walls with them. What is left
--- exposed is an interior boundary, which had no wall because in the union
--- it was not a boundary at all. That is the gap that survived closing the
--- run ends: the first frame looked solid and every other frame did not.
---
--- So an animated standee gets a wall on BOTH sides of EVERY pixel. A wall
--- between two lit pixels is enclosed by the front and back faces and never
--- seen; the moment its neighbour is keyed out it becomes the edge, already
--- in place and already wearing the right colour. Each is inset a hair into
--- its own pixel so the two that meet at a boundary are not coplanar -- the
--- voxel pass draws with culling off, and two quads in the same plane would
--- z-fight rather than politely take turns.
-local SIDE_INSET = 0.03
-
-local function sideQuads(quads, ix, ix2, yBot, yTop, zB, zF,
-                         ax0, ay0, atlasW, atlasH, py, lit, everyPixel)
-  local function texel(px)
-    return (ax0 + px + 0.5) / atlasW, (ay0 + py + 0.5) / atlasH
-  end
-  local function left(px, at)
-    local u, v = texel(px)
-    quads[#quads + 1] = {                 -- facing -X
-      { at, yBot, zB }, { at, yBot, zF },
-      { at, yTop, zF }, { at, yTop, zB },
-      uv = { { u, v }, { u, v }, { u, v }, { u, v } },
-      shade = OBJ_SHADE.side,
-    }
-  end
-  local function right(px, at)
-    local u, v = texel(px)
-    quads[#quads + 1] = {                 -- facing +X
-      { at, yBot, zF }, { at, yBot, zB },
-      { at, yTop, zB }, { at, yTop, zF },
-      uv = { { u, v }, { u, v }, { u, v }, { u, v } },
-      shade = OBJ_SHADE.side,
-    }
-  end
-  if everyPixel then
-    for px = ix, ix2 do
-      left(px, px + SIDE_INSET)
-      right(px, px + 1 - SIDE_INSET)
-    end
-    return
-  end
-  if not lit(ix - 1, py) then left(ix, ix) end
-  if not lit(ix2 + 1, py) then right(ix2, ix2 + 1) end
-end
-
 -- A tall-grass CELL is four tufts: 2x2 tiles, and each 8x8 tile is one
 -- whole clump of grass. Each tile stands as its own thin per-pixel slab
 -- at ITS OWN depth -- the cell's north tile row in the north half of the
@@ -3436,20 +3397,6 @@ local function grassTemplate(map, data, tileId)
             shade = 1,
           }
         end
-        -- and underneath, where a blade ends in mid-air over the ground
-        if not opaque(ix, iy + 1) then
-          quads[#quads + 1] = {
-            { ix, yBot, zF }, { ix2 + 1, yBot, zF },
-            { ix2 + 1, yBot, zB }, { ix, yBot, zB },
-            uv = { { u0, v1 }, { u1, v1 }, { u1, v1 }, { u0, v1 } },
-            shade = OBJ_SHADE.bottom,
-          }
-        end
-        -- and the run's two end walls, which is what makes a blade a solid
-        -- thing rather than two billboards you can see between (sideQuads
-        -- above argues it, and why each wall wears its end pixel's colour)
-        sideQuads(quads, ix, ix2, yBot, yTop, zB, zF,
-                  ax0, ay0, atlasW, atlasH, iy, opaque)
         ix = ix2 + 1
       else
         ix = ix + 1
@@ -3617,51 +3564,17 @@ local function flowerTemplate(map, data, tileId)
           uv = { { u1, v1 }, { u0, v1 }, { u0, v0 }, { u1, v0 } },
           shade = OBJ_SHADE.back,
         }
-        -- ------- the shell, closed on all four remaining faces
-        --
-        -- A flower SWAYS: the geometry spans the union of every animation
-        -- frame's mask and each frame is cut back out of it in texture
-        -- space (see the header). So "is there a pixel next door" has two
-        -- different answers -- one in the union this mesh was built from,
-        -- and one in the frame actually on screen -- and only the second
-        -- decides what is exposed.
-        --
-        -- Closing the union's own edges is therefore not enough, and was
-        -- the bug the first cut of this shipped: the base frame looked
-        -- solid and every other frame still had gaps, because a pixel that
-        -- drops out of a frame takes the union's wall with it and leaves an
-        -- interior boundary that never had one.
-        --
-        -- So every pixel gets a cap on all four of its remaining faces,
-        -- whatever its neighbours do. A cap between two lit pixels sits
-        -- inside the slab, enclosed by the front and back faces, and is
-        -- never seen; the moment its neighbour is keyed out it IS the edge,
-        -- already there and already wearing the right colour. Each samples
-        -- its own pixel's texel, so it appears and vanishes with the pixel
-        -- it belongs to rather than with the one it is closing off.
-        --
-        -- Inset a hair into its own pixel, because the voxel pass draws
-        -- with culling off: the two caps that meet at a boundary would be
-        -- coplanar and z-fight rather than politely take turns.
-        for px = ix, ix2 do
-          local tu = (ax0 + px + 0.5) / atlasW
-          local tv = (ay0 + py + 0.5) / atlasH
-          local xa, xb = px, px + 1
-          local yT = yTop - SIDE_INSET
-          local yB = yBot + SIDE_INSET
-          quads[#quads + 1] = {           -- the pixel's own lid
-            { xa, yT, zB }, { xb, yT, zB }, { xb, yT, zF }, { xa, yT, zF },
-            uv = { { tu, tv }, { tu, tv }, { tu, tv }, { tu, tv } },
+        -- petal tips: a top strip where the row above is clear. The
+        -- strip samples its own row's texel, so a tip that is not in
+        -- the current frame discards with the face beneath it
+        if not on(ix, py - 1) then
+          quads[#quads + 1] = {
+            { ix, yTop, zB }, { ix2 + 1, yTop, zB },
+            { ix2 + 1, yTop, zF }, { ix, yTop, zF },
+            uv = { { u0, v0 }, { u1, v0 }, { u1, v0 }, { u0, v0 } },
             shade = OBJ_SHADE.top,
           }
-          quads[#quads + 1] = {           -- and its floor
-            { xa, yB, zF }, { xb, yB, zF }, { xb, yB, zB }, { xa, yB, zB },
-            uv = { { tu, tv }, { tu, tv }, { tu, tv }, { tu, tv } },
-            shade = OBJ_SHADE.bottom,
-          }
         end
-        sideQuads(quads, ix, ix2, yBot, yTop, zB, zF,
-                  ax0, ay0, atlasW, atlasH, py, on, true)
         ix = ix2 + 1
       else
         ix = ix + 1

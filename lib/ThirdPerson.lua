@@ -86,6 +86,13 @@ ThirdPerson.ZOOM_TIME = 0.18          -- how fast the eye eases to a new one
 ThirdPerson.zoom = 1                  -- eased, what place() actually uses
 ThirdPerson.zoomGoal = 1              -- what the input asked for
 
+-- The last-known free-roam zoom, captured while the 3RD rung is engaged (see
+-- update) and held after it is dropped. The staged battle seeds from this so
+-- it opens at the player's last zoom -- not from the live ThirdPerson.zoom,
+-- which is stale during a battle (the freecam is not driving) and would
+-- otherwise reset to 1 on a fresh run. Nil until the rung has actually run.
+ThirdPerson.lastZoom = nil
+
 -- Step the zoom by `notches` (positive pulls the camera OUT). Returns true
 -- when the goal actually moved, so a caller can tell "zoomed" from "already
 -- at the stop" and let the input fall through.
@@ -117,9 +124,10 @@ end
 -- plane clips a hole in the very wall the boom stopped at.
 --
 -- CLEAR is how high above a cell's ground the eye must be to pass OVER
--- something unwalkable rather than being stopped by it: a fence, a kerb or
--- a plant pot should not shove the camera in, a building should. Roughly
--- head height, so the eye clears the props and never the walls.
+-- something unwalkable outdoors rather than being stopped by it: a fence, a
+-- kerb or a plant pot should not shove the camera in. Indoor unwalkable cells
+-- are treated as walls at every height below, because those maps have neither
+-- ceilings nor a drawable world outside their room shell.
 ThirdPerson.STEP = 4
 ThirdPerson.REFINE = 4
 ThirdPerson.PAD = 5
@@ -160,8 +168,9 @@ end
 -- Required lazily and guarded: VR reaches this module through FirstPerson,
 -- and a headless run has no VR module worth loading at all.
 local function headset()
-  local ok, on = pcall(function() return V.require("VR").active() end)
-  return ok and on or false
+  -- No VR module in this fork: a headset is never present.
+  local on = false
+  return on
 end
 
 function ThirdPerson.selected()
@@ -182,10 +191,12 @@ function ThirdPerson.extended()
 end
 
 -- How far back the eye must ACTUALLY be, in world pixels, for the player's
--- own card to be worth drawing: a shade under a cell, which is the point
--- where a 16-pixel card stops being a character and starts being a wall of
--- pixels across the lens.
-ThirdPerson.SHOW_AT = 14
+-- own card to be worth drawing.  At the old one-cell threshold a camera
+-- squeezed by an interior wall drew the 16-pixel card across almost the
+-- entire 65-degree frame.  Twenty-eight keeps the card below roughly half
+-- the view; tighter rooms gracefully become first person until the boom has
+-- enough room to frame the player again.
+ThirdPerson.SHOW_AT = 28
 
 -- Whether the player's own card belongs in the frame. Not the same
 -- question as extended(): back into a fence and the boom collapses into
@@ -253,7 +264,18 @@ local function occupied(ow, wx, y, wz)
   gh = (okG and gh) or 0
   if y < gh + ThirdPerson.PAD then return true end
   local okW, walkable = pcall(function() return map:isWalkableCell(cx, cy) end)
-  if okW and not walkable and y < gh + ThirdPerson.CLEAR then return true end
+  if okW and not walkable then
+    local def = map.def
+    -- Outdoor unwalkable cells include low fences, kerbs and props which the
+    -- boom may legitimately clear.  Indoor unwalkable cells are the room's
+    -- walls: Gen 1 interiors have no ceiling or world beyond them, so letting
+    -- a pitched boom rise over their nominal voxel height exposes the black
+    -- void.  Unknown/headless maps retain the historical outdoor behaviour.
+    local indoor = def and (def.outdoor == false
+      or (def.outdoor == nil and def.tileset
+          and def.tileset ~= "OVERWORLD"))
+    if indoor or y < gh + ThirdPerson.CLEAR then return true end
+  end
   return false
 end
 
@@ -311,6 +333,7 @@ function ThirdPerson.update(dt, blend)
   end
 
   local target = ThirdPerson.selected() and 1 or 0
+  if target > 0 then ThirdPerson.lastZoom = ThirdPerson.zoom end
   if (blend or 0) <= 0 then
     ThirdPerson.out = target
     ThirdPerson.len = ThirdPerson.reachFor() * target
@@ -366,7 +389,8 @@ function ThirdPerson.place(pivot, lx, ly, lz, focus)
 
   local want = ThirdPerson.reachFor() * e
   ThirdPerson.want = want
-  local room = ThirdPerson.reach(overworld(), orbit, -lx, -ly, -lz, want)
+  local world = overworld()
+  local room = ThirdPerson.reach(world, orbit, -lx, -ly, -lz, want)
   -- in instantly, out only as fast as update() allows
   ThirdPerson.len = math.min(ThirdPerson.len, room)
   local len = ThirdPerson.len
@@ -385,6 +409,17 @@ function ThirdPerson.place(pivot, lx, ly, lz, focus)
     local s = ThirdPerson.SHOULDER * ThirdPerson.zoom * e
               * (len / math.max(want, 1e-6))
     sx, sz = -lz / flat * s, lx / flat * s
+  end
+
+  -- The boom march follows its centre line, while the shoulder rail moves
+  -- the final eye sideways.  In a narrow gate that last offset alone can put
+  -- the lens through a side wall even though the centre line was clear.  Give
+  -- up the cosmetic shoulder before accepting an occupied final position.
+  if (sx ~= 0 or sz ~= 0) and world
+     and occupied(world, orbit[1] - lx * len + sx,
+                          orbit[2] - ly * len,
+                          orbit[3] - lz * len + sz) then
+    sx, sz = 0, 0
   end
 
   local eye = { orbit[1] - lx * len + sx,

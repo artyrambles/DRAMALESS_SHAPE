@@ -484,10 +484,11 @@ uniform vec3 dayTint;
 // depth sampler is qualified because GLSL ES defaults samplers to LOWP no
 // matter what floats are set to, and eight bits of depth is a march with
 // nothing to land on. The frame copy is honest 8-bit colour and can stay.
+#ifndef SKY_ONLY
 uniform Image reflectTex;
 uniform LOVE_HIGHP_OR_MEDIUMP Image depthTex;
-
 uniform float rays;          // 0 = sky only, 1 = march the screen too
+#endif
 uniform vec3 lookFlat;       // the way the horizon lies from this camera
 uniform float lean;          // and how far the reflection tilts toward it
 uniform float leanElev;      // the elevation it aims at, in radians
@@ -688,6 +689,7 @@ vec3 bodyAt(vec3 d, vec3 c, float parity) {
   return disc;
 }
 
+#ifndef SKY_ONLY
 // ------- the screen-space march
 
 // A point as (uv, depth, valid), through the very matrix the frame was drawn
@@ -760,6 +762,7 @@ vec4 march(vec3 origin, vec3 dir) {
   }
   return miss;
 }
+#endif
 
 // ------- the surface, as a field of pixel-tall columns
 
@@ -940,16 +943,7 @@ vec2 waveUV(vec2 tc, vec2 col) {
 // can afford it -- the colour is a colour, and tc/sc arrived through
 // LOVE's mediump plumbing whatever this signature says -- and the maths
 // below runs on the stage default the moment the values touch a local.
-//
-// Which precision that has to BE is not ours to know: LOVE 12 forward-
-// declares effect() under a different one, and pins that matched 11's
-// prototype are the mismatch there -- the same refusal, from the other
-// side, with the water falling back to flat. So the qualifier is a define
-// the Lua side fills in, and Water.shader compiles the pinned form first
-// and the bare one only if that is refused. Whichever prototype a runtime
-// brought, one of the two agrees with it.
-vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
-            EFFECT_PREC vec2 sc) {
+vec4 effect(mediump vec4 color, Image tex, mediump vec2 tc, mediump vec2 sc) {
   // THE DEPTH TEST, done here because the buffer that would have done it is
   // detached for the length of this pass so it can be READ (see the header).
   // Same comparison, same buffer, same result: a building in front of a pond
@@ -988,10 +982,12 @@ vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
   // like flat water with reflective seams. Anything GENUINELY in front of a
   // water pixel is whole world units nearer -- upward of 1e-3 in depth --
   // so 2e-4 clears the drift with room while still catching every occluder.
+#ifndef SKY_ONLY
   vec2 uv = sc / love_ScreenSize.xy;
   vec4 selfC = vp * vec4(vBent, 1.0);
   float selfZ = selfC.z / selfC.w * 0.5 + 0.5;
   if (selfZ > Texel(depthTex, uv).r + 2e-4) discard;
+#endif
 
   // THE COLUMN THIS FRAGMENT IS LOOKING AT. Every water pixel is a bar of
   // its own standing a whole number of pixels tall, and the ray decides
@@ -1073,10 +1069,12 @@ vec4 effect(EFFECT_PREC vec4 color, Image tex, EFFECT_PREC vec2 tc,
   if (skyOn > 0.5) {
     refl = bodyAt(r, skyAt(r, parity), parity);
   }
+#ifndef SKY_ONLY
   if (rays > 0.5) {
     vec4 hit = march(surf, r);
     refl = mix(refl, hit.rgb, hit.a);
   }
+#endif
 
   // Schlick, floored and softened (see FRESNEL_* in Water.lua): the angle
   // still decides, a grazing camera still gets a mirror, and a steep one
@@ -1142,7 +1140,7 @@ end
 
 Water._trainSource = trainSource       -- named for the suite
 
-local function source(grid, bare)
+local function source(grid, skyOnly)
   local src = SHADER_SRC:gsub("//@CRATERS", (craterSource():gsub("%%", "%%%%")))
   src = src:gsub("//@TRAINS", (trainSource():gsub("%%", "%%%%")))
   local head = ("#define RAY_STEPS %d\n#define RAY_REFINE %d\n"
@@ -1150,12 +1148,7 @@ local function source(grid, bare)
     :format(Water.RAY_STEPS, Water.RAY_REFINE, Water.WAVE_STEPS,
             Water.WAVE_STRIDE)
   if grid then head = head .. "#define VOXEL_GRID 1\n" end
-  -- effect()'s parameter precision -- see the signature for why it cannot
-  -- simply be spelled there. Empty is a define all the same: the params
-  -- then carry the stage default, which is what a prototype declared
-  -- without qualifiers wants.
-  head = head .. (bare and "#define EFFECT_PREC\n"
-                        or "#define EFFECT_PREC mediump\n")
+  if skyOnly then head = head .. "#define SKY_ONLY 1\n" end
   return head .. src
 end
 
@@ -1165,32 +1158,29 @@ Water._source = source                 -- named for the suite
 -- wireframe variant needs derivatives, the one thing a driver can refuse,
 -- and a refusal must cost the seams on the water and nothing else.
 -- nil = untried, false = unavailable.
-local shaders = { [false] = nil, [true] = nil }
+local shaders = {
+  full = { [false] = nil, [true] = nil },
+  sky = { [false] = nil, [true] = nil },
+}
 
-function Water.shader(grid)
+function Water.shader(grid, skyOnly)
   grid = grid and true or false
-  if shaders[grid] == nil then
+  local family = skyOnly and shaders.sky or shaders.full
+  if family[grid] == nil then
     if not (love.graphics and love.graphics.newShader) then
       shaders[grid] = false
     else
-      local ok, sh = pcall(love.graphics.newShader, source(grid))
-      if not ok then
-        -- the pinned prototype was the wrong one for this runtime; the bare
-        -- one is the only other shape there is, and a driver that refuses
-        -- both was never going to draw this water anyway
-        local bareOk, bareSh = pcall(love.graphics.newShader, source(grid, true))
-        if bareOk then ok, sh = bareOk, bareSh end
-      end
+      local ok, sh = pcall(love.graphics.newShader, source(grid, skyOnly))
       if not ok and V and V.mod and V.mod.log then
         -- once, where it can be read: the fallback is flat water, which is
         -- easy to look at and impossible to diagnose without this line
         V.mod.log:warn("water shader did not compile: %s -- lakes draw flat",
                        tostring(sh))
       end
-      shaders[grid] = (ok and sh) or false
+      family[grid] = (ok and sh) or false
     end
   end
-  return shaders[grid] or nil
+  return family[grid] or nil
 end
 
 -- ------- the pass
@@ -1229,12 +1219,19 @@ Water._waveTime = waveTime
 --
 -- Returns false when the pass cannot run, in which case the caller draws the
 -- water mesh through the ordinary scene shader instead.
-function Water.begin(ctx)
-  if not (ctx and ctx.reflect and ctx.depth) then return false end
+function Water.begin(ctx, skyOnly)
+  if not ctx then return false end
+  skyOnly = skyOnly and true or false
+  if not skyOnly and not (ctx.reflect and ctx.depth) then return false end
+  if skyOnly then
+    local ramp, count = Sky.ramp()
+    local edge = ctx.skyEdge
+    if not (ramp and count and edge and edge > 0) then return false end
+  end
   local level = Water.level()
   if level <= 0 then return false end
-  local sh = ctx.grid and Water.shader(true) or nil
-  if not sh then sh = Water.shader(false) end
+  local sh = ctx.grid and Water.shader(true, skyOnly) or nil
+  if not sh then sh = Water.shader(false, skyOnly) end
   if not sh then return false end
 
   love.graphics.setShader(sh)
@@ -1251,8 +1248,10 @@ function Water.begin(ctx)
   -- how much of the view one screen pixel is worth: what sets the relief
   -- march's stride, so a sample is always about a pixel of surface
   send("pxAngle", (ctx.fov or 1) / math.max(1, ctx.screen[2]))
-  send("reflectTex", ctx.reflect)
-  send("depthTex", ctx.depth)
+  if not skyOnly then
+    send("reflectTex", ctx.reflect)
+    send("depthTex", ctx.depth)
+  end
 
   -- the sun's pass, sent the same way and for the same reason the scene
   -- shader sends it: the sampler is declared either way, and leaving one
@@ -1260,6 +1259,12 @@ function Water.begin(ctx)
   local map = ShadowMap.active()
   send("sunVP", "row", map and ShadowMap.uvVP or Mat4.identity())
   local tex = ShadowMap.texture()
+  if not tex then
+    -- GLES drivers are allowed to reject a draw with an unbound sampler even
+    -- when sunDark makes its result irrelevant. Bind an existing harmless
+    -- texture: the frame copy in FULL, or the sky ramp in SKY-only mode.
+    tex = ctx.reflect or Sky.ramp()
+  end
   if tex then send("sunMap", tex) end
   local Voxel3D = V.require("Voxel3D")
   send("sunDark", map and Voxel3D.SHADOW_ALPHA or 0)
@@ -1268,7 +1273,7 @@ function Water.begin(ctx)
   send("sunTexel", { texel, texel })
   send("dayTint", Voxel3D.tint or { 1, 1, 1 })
 
-  send("rays", level >= 2 and 1 or 0)
+  if not skyOnly then send("rays", level >= 2 and 1 or 0) end
   -- the horizon lean, and the direction it leans toward (see Water.lean)
   send("lookFlat", ctx.lookFlat or { 0, 0, -1 })
   send("lean", Water.lean(ctx.descent))
@@ -1392,9 +1397,11 @@ end
 -- Drop the compiled shaders (window resize, hot reload): they are GPU
 -- objects on a context that may not exist any more.
 function Water.invalidate()
-  for k, sh in pairs(shaders) do
-    if sh and sh.release then pcall(sh.release, sh) end
-    shaders[k] = nil
+  for _, family in pairs(shaders) do
+    for k, sh in pairs(family) do
+      if sh and sh.release then pcall(sh.release, sh) end
+      family[k] = nil
+    end
   end
   active = nil
 end

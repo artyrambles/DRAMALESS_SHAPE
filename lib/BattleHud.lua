@@ -12,40 +12,50 @@
 -- and an opaque slab in the corner of the frame is the white field back
 -- again by another name.
 --
--- The ink does NOT change. There was a pass here that measured each panel's
--- average brightness and flipped the glyphs to white over a dark one, with
--- hysteresis so a drifting camera could not strobe them. It worked, and it
--- was still wrong: the battle menu is the one part of the frame the player
--- reads constantly, and having its colour depend on what the camera happens
--- to be pointing at makes it an unreliable piece of furniture. Gen 1's
--- battle text is black, so it is black -- and the panel's tint is what
--- earns that its contrast, on a cave floor as much as on a meadow.
+-- And the text flips. A panel over a sunlit meadow is bright and wants black
+-- glyphs; the same panel over a cave floor or a dark roof is not, and wants
+-- white ones. So the panel's average brightness is measured and the glyphs
+-- follow it, with hysteresis so a slow camera drift across the threshold
+-- cannot strobe them.
 --
--- Removing it also took out a one-pixel GPU readback that ran several times
--- a second purely to answer a question nothing asks any more.
+-- The measurement is a one-pixel readback, which is a GPU stall, so it runs
+-- a few times a second rather than every frame. The camera drifts at about
+-- a pixel a second; brightness cannot outrun that.
 
 -- the mod namespace (see main.lua): V.require loads a sibling module
 local V = ...
+
+local BattlePresentation = V.require("BattlePresentation")
 
 local BattleHud = {}
 
 -- How solid the frost is over the world behind it, and how far the tint
 -- pushes it toward the far end from the text.
 --
--- Both deliberately light. The panel is there to make glyphs legible, not to
--- put a slab in the corner of the frame: at these values the sharp world
--- still reads through it and the blur registers as a pane of glass rather
--- than as a second background.
-BattleHud.FROST = 0.55
-BattleHud.TINT = 0.26
+-- Keep the backplates fully transparent. Contrast still comes from the
+-- luminance verdict below, which switches the engine's glyphs between black
+-- and white without placing a translucent slab over the arena.
+BattleHud.FROST = 0.0
+BattleHud.TINT = 0.0
+
+-- The luminance the glyphs flip at, with a dead band so a drift across it
+-- settles rather than strobes.
+BattleHud.DARK_ENTER = 0.44   -- below this, the panel is dark: white glyphs
+BattleHud.DARK_LEAVE = 0.56   -- above this, back to black ones
+
+-- Frames between brightness readbacks.
+BattleHud.SAMPLE_EVERY = 12
 
 -- The frost buffer's height; width follows the source's aspect. Small on
--- purpose: the downscale is most of the blur.
+-- purpose: the downscale is most of the blur, and what is read back for the
+-- brightness is one pixel of it.
 BattleHud.FROST_H = 72
 
 local frost, frostW, frostH = nil, 0, 0
 local blurA, blurB = nil, nil
+local probe = nil
 local frame = 0
+local luma = {}      -- panel key -> { value, dark, at }
 
 local SHADER = [[
   uniform vec2 dir;
@@ -93,6 +103,7 @@ function BattleHud.build(src)
     frost = canvasOf(w, h)
     blurA = canvasOf(w, h)
     blurB = canvasOf(w, h)
+    probe = probe or canvasOf(1, 1)
     if not (frost and blurA and blurB) then
       frost, blurA, blurB, frostW, frostH = nil, nil, nil, 0, 0
       return nil
@@ -139,6 +150,46 @@ function BattleHud.frame()
   return frame
 end
 
+-- Average luminance of the frost under `key`'s rect, in frost-canvas pixels.
+--
+-- Averaged by letting the GPU do it: the rect is drawn into a one-pixel
+-- canvas, which IS the mean, and that one pixel is read back. Cached for
+-- SAMPLE_EVERY frames because the readback synchronises the pipeline and
+-- nothing it measures moves faster than that.
+local function sampleLuma(key, fx, fy, fw, fh)
+  local hit = luma[key]
+  if hit and (frame - hit.at) < BattleHud.SAMPLE_EVERY then return hit.value end
+  if not (frost and probe and frostW > 0) then return hit and hit.value end
+  if fw <= 0 or fh <= 0 then return hit and hit.value end
+
+  local prevCanvas = love.graphics.getCanvas()
+  local prevBlend, prevAlpha = love.graphics.getBlendMode()
+  local value = hit and hit.value or 1
+  local ok = pcall(function()
+    love.graphics.setCanvas(probe)
+    love.graphics.setBlendMode("replace", "premultiplied")
+    love.graphics.setColor(1, 1, 1, 1)
+    local quad = love.graphics.newQuad(fx, fy, fw, fh, frostW, frostH)
+    love.graphics.draw(frost, quad, 0, 0, 0, 1 / fw, 1 / fh)
+    love.graphics.setCanvas()
+    local data = probe:newImageData()
+    local r, g, b = data:getPixel(0, 0)
+    if data.release then pcall(data.release, data) end
+    value = 0.299 * r + 0.587 * g + 0.114 * b
+  end)
+
+  if prevCanvas then
+    love.graphics.setCanvas(prevCanvas)
+  else
+    love.graphics.setCanvas()
+  end
+  love.graphics.setBlendMode(prevBlend or "alpha", prevAlpha)
+  if not ok then return hit and hit.value end
+
+  luma[key] = { value = value, at = frame }
+  return value
+end
+
 -- Map a GB-frame rect onto the frost canvas, given where the letterbox sits
 -- in the source the frost was built from.
 local function frostRect(rect, box)
@@ -168,14 +219,49 @@ local function mapper(world)
   return world and frostRectWorld or frostRect
 end
 
+-- ------- the verdict
+--
+-- ONE answer for the whole frame, not one per panel. Both HUDs draw in a
+-- single pass and there is only one glyph colour to be had out of it -- and
+-- a frame with a black-lettered HUD in one corner and a white-lettered one
+-- in the other would read as a bug rather than as adaptation. The DARKER
+-- panel decides, because it is the one that cannot afford to be wrong, and
+-- the tint below then commits both panels to that reading.
+local wasDark = false
+
+function BattleHud.verdict(rects, box, world)
+  if not (frost and box and box.scale and box.scale > 0) then return false end
+  local toFrost = mapper(world)
+  local darkest = nil
+  for key, rect in pairs(rects) do
+    local fx, fy, fw, fh = toFrost(rect, box)
+    local v = sampleLuma(key, fx, fy, fw, fh)
+    if v and (not darkest or v < darkest) then darkest = v end
+  end
+  if not darkest then return wasDark end
+  -- hysteresis: it takes a clear move past the far threshold to flip back,
+  -- so a camera drifting across the boundary settles instead of strobing
+  if wasDark then
+    wasDark = darkest < BattleHud.DARK_LEAVE
+  else
+    wasDark = darkest < BattleHud.DARK_ENTER
+  end
+  return wasDark
+end
+
 -- Draw one HUD panel into the current target, in that target's own
 -- coordinates: GB ones for the 160x144 UI canvas, world pixels (world = true)
 -- for a panel laid straight onto the world image.
 --
--- The tint always pushes toward WHITE, away from the black ink that is about
--- to land on it, so the contrast is guaranteed rather than hoped for -- and
--- it is the whole of what makes a fixed ink colour workable over any ground.
-function BattleHud.panel(rect, box, world)
+-- The tint always pushes AWAY from the glyph colour that is about to be
+-- used, so the contrast is guaranteed rather than hoped for: a dark panel
+-- gets darker under white text, a bright one brighter under black text.
+function BattleHud.panel(rect, box, dark, world)
+  if BattlePresentation.suppressed("panels") then return true end
+  -- Fully transparent means absent, not a zero-alpha draw. Avoid touching the
+  -- destination canvas or blend state at all; premultiplied driver paths can
+  -- otherwise retain RGB from a transparent sample as a dim veil.
+  if BattleHud.FROST <= 0 and BattleHud.TINT <= 0 then return true end
   if not (frost and box and box.scale and box.scale > 0) then return false end
   local fx, fy, fw, fh = mapper(world)(rect, box)
   local ok = pcall(function()
@@ -183,11 +269,297 @@ function BattleHud.panel(rect, box, world)
     love.graphics.setColor(1, 1, 1, BattleHud.FROST)
     love.graphics.draw(frost, quad, rect[1], rect[2], 0,
                        rect[3] / fw, rect[4] / fh)
-    love.graphics.setColor(1, 1, 1, BattleHud.TINT)
+    local shade = dark and 0 or 1
+    love.graphics.setColor(shade, shade, shade, BattleHud.TINT)
     love.graphics.rectangle("fill", rect[1], rect[2], rect[3], rect[4])
     love.graphics.setColor(1, 1, 1, 1)
   end)
   return ok
+end
+
+-- ------- flipping the glyphs
+--
+-- Over a dark panel the HUD's black text has to go white, and it cannot be
+-- done by setting a draw colour: LOVE MULTIPLIES by it, and a black glyph
+-- times white is still black. The colour channel has to be REPLACED.
+--
+-- So the HUD is drawn into a scratch layer and that layer is composited back
+-- through a shader that whitens whatever is nearly black and leaves the rest
+-- alone. "Nearly black" is the text, the tick marks and the bar's outline --
+-- everything the HUD draws as ink -- while the HP bar's own greens and reds
+-- are well clear of the threshold and come through untouched.
+--
+-- Composited back into whatever the caller had bound, which is what makes it
+-- work in both pipelines without knowing which one it is in: in the colorized
+-- one that target is the grayscale BG canvas, where white IS shade 0 and the
+-- zone pass then colours the flipped glyphs like every other lightest-shade
+-- surface; in the flat fallback it is the screen, where white is white.
+local INK = 0.35   -- luminance at or under which a pixel counts as ink
+
+local FLIP = [[
+  uniform float ink;
+  bool hpGaugeColor(vec4 p, vec2 tc) {
+    // Only the six coloured fill cells -- not the "HP" glyph, the left
+    // bracket, cap or outline. These are fixed BattleState HUD coordinates.
+    vec2 px = tc * vec2(160.0, 144.0);
+    bool gauge = (px.x >= 32.0 && px.x < 80.0
+                  && px.y >= 16.0 && px.y < 24.0)
+              || (px.x >= 96.0 && px.x < 144.0
+                  && px.y >= 72.0 && px.y < 80.0);
+    float chroma = max(p.r, max(p.g, p.b)) - min(p.r, min(p.g, p.b));
+    return gauge && chroma > 0.04 * p.a;
+  }
+  vec3 brightHpGauge(vec4 p) {
+    // The engine's fill shade is deliberately only 2/3 bright. That reads as
+    // near-black over terrain, so retain its health band but lift it to a
+    // display colour: green healthy, yellow at mid HP, red when critical.
+    if (p.g > p.r + 0.08 * p.a && p.g > p.b)
+      return vec3(0.20, 0.92, 0.32) * p.a;
+    if (p.r > p.g * 1.35)
+      return vec3(1.00, 0.16, 0.10) * p.a;
+    return vec3(1.00, 0.82, 0.05) * p.a;
+  }
+  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    vec4 p = Texel(tex, tc);
+    float luma = dot(p.rgb, vec3(0.299, 0.587, 0.114));
+    if (hpGaugeColor(p, tc))
+      p.rgb = brightHpGauge(p);
+    else if (p.a > 0.0 && luma <= ink * p.a)
+      p.rgb = vec3(p.a);
+    return p * color;
+  }
+]]
+BattleHud._flipSource = FLIP
+
+-- COLOR mode keeps the engine's black ink, but the gauge needs the same
+-- visibility lift as INVERTED. This shader changes only saturated pixels in
+-- the two fixed six-cell HP spans; labels, numbers, outlines and chrome pass
+-- through byte-for-byte.
+local HP_COLOR = [[
+  bool hpGaugeColor(vec4 p, vec2 tc) {
+    vec2 px = tc * vec2(160.0, 144.0);
+    bool gauge = (px.x >= 32.0 && px.x < 80.0
+                  && px.y >= 16.0 && px.y < 24.0)
+              || (px.x >= 96.0 && px.x < 144.0
+                  && px.y >= 72.0 && px.y < 80.0);
+    float chroma = max(p.r, max(p.g, p.b)) - min(p.r, min(p.g, p.b));
+    return gauge && chroma > 0.04 * p.a;
+  }
+  vec3 brightHpGauge(vec4 p) {
+    if (p.g > p.r + 0.08 * p.a && p.g > p.b)
+      return vec3(0.20, 0.92, 0.32) * p.a;
+    if (p.r > p.g * 1.35)
+      return vec3(1.00, 0.16, 0.10) * p.a;
+    return vec3(1.00, 0.82, 0.05) * p.a;
+  }
+  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    vec4 p = Texel(tex, tc);
+    if (hpGaugeColor(p, tc)) p.rgb = brightHpGauge(p);
+    return p * color;
+  }
+]]
+BattleHud._hpColorSource = HP_COLOR
+
+-- Textbox paper is split from its ink before it reaches this shader. Border
+-- glyph pages can still carry opaque light matte pixels of their own (most
+-- visibly the special bottom-right tile beside the PP readout). The general
+-- HUD flip above must preserve non-ink pixels because it also carries HP-bar
+-- colours; the textbox variant deliberately outputs ink and nothing else.
+local INK_ONLY = [[
+  uniform float ink;
+  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    vec4 p = Texel(tex, tc);
+    float luma = dot(p.rgb, vec3(0.299, 0.587, 0.114));
+    float a = (p.a > 0.0 && luma <= ink * p.a) ? p.a : 0.0;
+    return vec4(a, a, a, a) * color;
+  }
+]]
+BattleHud._inkOnlySource = INK_ONLY
+
+-- A one-logical-pixel shadow belongs to the flipped (white) ink, not to the
+-- transparent panel behind it. Build it from the same black source pixels the
+-- flip shader recognises, then put the white result over it. Because this is
+-- done before the HUD texture is enlarged, the offset remains aligned to the
+-- Game Boy pixel grid at every window scale.
+local SHADOW_ALPHA = 0.72
+-- COLOR keeps a clean white shadow. A covered gray duplicate made the HUD
+-- look muddy and heavier than the source glyphs; the lighter alpha keeps the
+-- original black/coloured HUD visually primary.
+BattleHud.COLOR_SHADOW_SHADE = 1.0
+BattleHud.COLOR_SHADOW_ALPHA = 0.38
+local SHADOW = [[
+  uniform float ink;
+  uniform float opacity;
+  bool hpGaugeColor(vec4 p, vec2 tc) {
+    vec2 px = tc * vec2(160.0, 144.0);
+    bool gauge = (px.x >= 32.0 && px.x < 80.0
+                  && px.y >= 16.0 && px.y < 24.0)
+              || (px.x >= 96.0 && px.x < 144.0
+                  && px.y >= 72.0 && px.y < 80.0);
+    float chroma = max(p.r, max(p.g, p.b)) - min(p.r, min(p.g, p.b));
+    return gauge && chroma > 0.04 * p.a;
+  }
+  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    vec4 p = Texel(tex, tc);
+    float luma = dot(p.rgb, vec3(0.299, 0.587, 0.114));
+    float a = (p.a > 0.0 && luma <= ink * p.a
+               && !hpGaugeColor(p, tc)) ? p.a * opacity : 0.0;
+    return vec4(0.0, 0.0, 0.0, a) * color;
+  }
+]]
+BattleHud._shadowSource = SHADOW
+-- The same recognition, but for the WHITE arena fill: the drop-shadow that
+-- keeps black ink from disappearing into a black tile becomes WHITE, because
+-- the field under it is now white. The glyphs themselves stay black (no flip),
+-- so the box reads as plain black text on white with a white halo.
+local WHITE_SHADOW = [[
+  uniform float ink;
+  uniform float opacity;
+  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    vec4 p = Texel(tex, tc);
+    float luma = dot(p.rgb, vec3(0.299, 0.587, 0.114));
+    float a = (p.a > 0.0 && luma <= ink * p.a) ? p.a * opacity : 0.0;
+    return vec4(1.0, 1.0, 1.0, a) * color;
+  }
+]]
+local COLOR_SHADOW = [[
+  uniform float ink;
+  uniform float opacity;
+  uniform float shade;
+  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    vec4 p = Texel(tex, tc);
+    float luma = dot(p.rgb, vec3(0.299, 0.587, 0.114));
+    float a = (p.a > 0.0 && luma <= ink * p.a) ? p.a * opacity : 0.0;
+    return vec4(vec3(shade), a) * color;
+  }
+]]
+
+local flipShader = nil
+local hpColorShader = nil
+local inkOnlyShader = nil
+local shadowShader = nil
+local whiteShadowShader = nil
+local colorShadowShader = nil
+local layer = nil
+
+local function getFlip()
+  if flipShader == nil then
+    local ok, sh = pcall(love.graphics.newShader, FLIP)
+    flipShader = (ok and sh) or false
+  end
+  return flipShader or nil
+end
+
+local function getHpColor()
+  if hpColorShader == nil then
+    local ok, sh = pcall(love.graphics.newShader, HP_COLOR)
+    hpColorShader = (ok and sh) or false
+  end
+  return hpColorShader or nil
+end
+
+local function getInkOnly()
+  if inkOnlyShader == nil then
+    local ok, sh = pcall(love.graphics.newShader, INK_ONLY)
+    inkOnlyShader = (ok and sh) or false
+  end
+  return inkOnlyShader or nil
+end
+
+local function getShadow()
+  if shadowShader == nil then
+    local ok, sh = pcall(love.graphics.newShader, SHADOW)
+    shadowShader = (ok and sh) or false
+  end
+  return shadowShader or nil
+end
+
+local function getWhiteShadow()
+  if whiteShadowShader == nil then
+    local ok, sh = pcall(love.graphics.newShader, WHITE_SHADOW)
+    whiteShadowShader = (ok and sh) or false
+  end
+  return whiteShadowShader or nil
+end
+
+local function getColorShadow()
+  if colorShadowShader == nil then
+    local ok, sh = pcall(love.graphics.newShader, COLOR_SHADOW)
+    colorShadowShader = (ok and sh) or false
+  end
+  return colorShadowShader or nil
+end
+
+-- Whether the flip pass can run at all, for the shot driver's log.
+function BattleHud.flipReady()
+  return getFlip() ~= nil
+end
+
+-- Run `fn` with its ink whitened. Falls back to running it plainly when the
+-- scratch layer or the shader is unavailable, so a driver that cannot do
+-- Run `fn` with its ink rendered. `inverted` (the WHITE arena fill) keeps the
+-- engine's own black glyphs and adds a WHITE drop-shadow instead of flipping
+-- them to white with a black shadow: on a solid white field black text reads
+-- and the white halo keeps it legible over any sprite behind it. Falls back to
+-- running fn plainly when the scratch layer or shader is unavailable.
+function BattleHud.flipGlyphs(w, h, fn, inverted, inkOnly, colorShadow)
+  local sh = inkOnly and getInkOnly() or getFlip()
+  if not sh then return fn() end
+  if not layer or layer:getWidth() ~= w or layer:getHeight() ~= h then
+    layer = canvasOf(w, h, "nearest")
+    if not layer then return fn() end
+  end
+
+  local prevCanvas = love.graphics.getCanvas()
+  local prevBlend, prevAlpha = love.graphics.getBlendMode()
+  local ok, err = pcall(function()
+    love.graphics.setCanvas(layer)
+    love.graphics.clear(0, 0, 0, 0)
+    love.graphics.setBlendMode("alpha")
+    fn()
+  end)
+  if prevCanvas then
+    love.graphics.setCanvas(prevCanvas)
+  else
+    love.graphics.setCanvas()
+  end
+  love.graphics.setBlendMode(prevBlend or "alpha", prevAlpha)
+  if not ok then error(err, 0) end
+
+  if inverted then
+    -- WHITE arena fill: black ink (the fn above) with a white drop-shadow.
+    local light = colorShadow and getColorShadow() or getWhiteShadow()
+    if light then
+      love.graphics.setShader(light)
+      pcall(light.send, light, "ink", INK)
+      pcall(light.send, light, "opacity",
+            colorShadow and BattleHud.COLOR_SHADOW_ALPHA or SHADOW_ALPHA)
+      if colorShadow then
+        pcall(light.send, light, "shade", BattleHud.COLOR_SHADOW_SHADE)
+      end
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(layer, 1, 1)
+    end
+    love.graphics.setShader(getHpColor())
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(layer, 0, 0)
+    love.graphics.setShader()
+    return
+  end
+
+  local shadow = getShadow()
+  if shadow then
+    love.graphics.setShader(shadow)
+    pcall(shadow.send, shadow, "ink", INK)
+    pcall(shadow.send, shadow, "opacity", SHADOW_ALPHA)
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(layer, 1, 1)
+  end
+  love.graphics.setShader(sh)
+  pcall(sh.send, sh, "ink", INK)
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(layer, 0, 0)
+  love.graphics.setShader()
 end
 
 -- ------- the whole HUD layer as a texture
@@ -198,13 +570,18 @@ end
 -- places at once, so the layer is rendered ONCE into a GB-sized canvas and
 -- each block is then blitted out of it as a quad.
 --
+-- `dark` runs the ink through the same flip the in-frame HUD uses, here baked
+-- into the texture rather than composited into the caller's target -- the world
+-- image the quads land on is a colour canvas, and a flip pass over it would
+-- whiten the terrain behind the glyphs along with them.
 local hudLayer = nil
 
-function BattleHud.layerTexture(w, h, fn)
+function BattleHud.layerTexture(w, h, dark, fn, inverted, colorShadow, battle)
   if not hudLayer or hudLayer:getWidth() ~= w or hudLayer:getHeight() ~= h then
     hudLayer = canvasOf(w, h, "nearest")
     if not hudLayer then return nil end
   end
+  local suppressHud = BattlePresentation.suppressed("hud", battle)
   local g = love.graphics
   local prevCanvas = g.getCanvas()
   local prevBlend, prevAlpha = g.getBlendMode()
@@ -213,7 +590,16 @@ function BattleHud.layerTexture(w, h, fn)
     g.clear(0, 0, 0, 0)
     g.setBlendMode("alpha")
     g.setColor(1, 1, 1, 1)
-    fn()
+    -- flipGlyphs renders fn into its own scratch layer and composites the
+    -- whitened result into whatever is bound, which is this canvas. `inverted`
+    -- (the WHITE arena fill) keeps the glyphs black with a white drop-shadow.
+    if not suppressHud then
+      if dark then
+        BattleHud.flipGlyphs(w, h, fn, inverted, nil, colorShadow)
+      else
+        fn()
+      end
+    end
   end)
   if prevCanvas then g.setCanvas(prevCanvas) else g.setCanvas() end
   g.setBlendMode(prevBlend or "alpha", prevAlpha)
@@ -222,10 +608,21 @@ function BattleHud.layerTexture(w, h, fn)
   return hudLayer
 end
 
+-- The last luminance measured, for the shot driver's log.
+function BattleHud.lastLuma()
+  local best = nil
+  for _, hit in pairs(luma) do
+    if not best or hit.value < best then best = hit.value end
+  end
+  return best
+end
+
 function BattleHud.invalidate()
-  frost, blurA, blurB = nil, nil, nil
+  frost, blurA, blurB, probe = nil, nil, nil, nil
   frostW, frostH = 0, 0
-  hudLayer = nil
+  luma = {}
+  wasDark = false
+  layer, hudLayer = nil, nil
 end
 
 return BattleHud

@@ -55,6 +55,7 @@ local Structures = V.require("Structures")
 local TileShape = V.require("TileShape")
 local Voxel3D = V.require("Voxel3D")
 local Budget = V.require("BuildBudget")
+local MeshDisk = V.require("VoxelMeshDisk")
 
 local ffi = nil
 do
@@ -63,6 +64,26 @@ do
 end
 
 local ChunkMesher = {}
+
+-- Which drawn row a FLAT-topped volume's top face wears at depth `ty`.
+--
+-- A structure is usually deeper than the art that draws it, so the rows
+-- cycle and the drawing repeats down the top. That is right for art which
+-- genuinely repeats -- the Safari Zone's fence alternates two tiles the
+-- whole way down -- and wrong for a RIM over a uniform body: a cliff
+-- mound's first row is its top edge, and cycling lays that edge again
+-- every second tile, striping a plateau with rims it should not have.
+--
+-- Where Structures found the body uniform, the rim is laid once at the
+-- north edge and the body held after it. Everything else cycles as before.
+function ChunkMesher.flatTopRow(run, ty)
+  local m = math.min(2, run.extent)
+  local d = ty - run.north
+  if run.topUniform then
+    return run.north + math.min(d, m - 1)
+  end
+  return run.north + (d % m)
+end
 
 -- Ring of border blocks meshed around the body, matching the width
 -- TileRenderer draws so the two modes end at the same place.
@@ -192,6 +213,9 @@ local function newFfiSink()
       end)
       return ok and mesh or nil
     end,
+    raw = function()
+      return { ptr = buf, n = n }
+    end,
   }
   return sink
 end
@@ -202,6 +226,35 @@ local function newSink()
     return newFfiSink()
   end
   return newTableSink()
+end
+
+-- Upload one cached/fresh raw stream through the same sliced path used by the
+-- FFI sink. Cached records point into an immutable Lua string; fresh records
+-- own an FFI buffer. Both remain alive through this call.
+local function meshFromRaw(record)
+  if not (record and record.n and record.n > 0 and ffi) then return nil end
+  local bytes = record.ptr and ffi.cast("const uint8_t*", record.ptr) or nil
+  if not bytes and record.blob then
+    bytes = ffi.cast("const uint8_t*", record.blob) + (record.offset or 0)
+  end
+  if not bytes then return nil end
+  local ok, mesh = pcall(function()
+    local result = love.graphics.newMesh(Voxel3D.FORMAT, record.n,
+                                         "triangles", "static")
+    local chunk, i = 65536, 0
+    while i < record.n do
+      local count = math.min(chunk, record.n - i)
+      local byteCount = count * 6 * 4
+      local data = love.data.newByteData(byteCount)
+      ffi.copy(data:getFFIPointer(), bytes + i * 6 * 4, byteCount)
+      result:setVertices(data, i + 1)
+      data:release()
+      i = i + count
+      Budget.check()
+    end
+    return result
+  end)
+  return ok and mesh or nil
 end
 
 -- -------------------------------------------------------------- geometry
@@ -376,7 +429,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
                     { x0 + 8, h, z0 + 8 }, { x0, h, z0 + 8 } },
                   { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } },
                   aoShades(x0 / 8, z0 / 8, h, shade))
-    end
+  end
 
   -- vertical quad for face direction `d` of the tile column at (x0, z0),
   -- spanning heights [y0, y1] and showing art rows [vTop, vBot] of `tile`.
@@ -528,8 +581,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
                  { x0 + 8, neY, z0 }, { x0, nwY, z0 } },
                { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } }, 0.95)
         elseif run then
-          local m = math.min(2, run.extent)
-          local topTile = map:tileAt(tx, run.north + ((ty - run.north) % m))
+          local topTile = map:tileAt(tx, ChunkMesher.flatTopRow(run, ty))
           topQuad(x0, z0, h, topTile, VOLUME_TOP_SHADE)
         else
           local topTile = tile
@@ -827,6 +879,65 @@ local function quadsMesh(quads)
   return Voxel3D.newMesh(verts, indices)
 end
 
+-- Flatten auxiliary quads into the same unindexed six-float stream terrain
+-- uses. This path is selected only when persistent caching is available; the
+-- historical table builder remains the headless/non-FFI fallback.
+local function rawQuads(quads)
+  local n = #(quads or {}) * 6
+  if n == 0 then return { n = 0 } end
+  local buf = ffi.new("float[?]", n * 6)
+  local at = 0
+  for _, q in ipairs(quads) do
+    for k = 1, 6 do
+      local i = TRI_ORDER[k]
+      local c = q[i]
+      local uv = q.uv and q.uv[i] or { q.u, q.v }
+      buf[at], buf[at + 1], buf[at + 2] = c[1], c[2], c[3]
+      buf[at + 3], buf[at + 4], buf[at + 5] = uv[1], uv[2], q.shade
+      at = at + 6
+    end
+    Budget.tick()
+  end
+  return { ptr = buf, n = n }
+end
+
+local function buildRawAux(map)
+  local structures = Structures.forMap(map)
+  local aux = {
+    grass = rawQuads(structures.grassQuads),
+    flowers = rawQuads(structures.flowerQuads),
+    figures = {},
+  }
+  for _, figure in ipairs(structures.figures or {}) do
+    local raw = rawQuads(figure.quads)
+    if raw.n > 0 then
+      local width = 0
+      for _, q in ipairs(figure.quads) do
+        for i = 1, 4 do
+          local x = q[i] and q[i][1]
+          if x and x > width then width = x end
+        end
+      end
+      raw.wx, raw.wz, raw.y, raw.w = figure.wx, figure.wz, figure.y, width
+      aux.figures[#aux.figures + 1] = raw
+    end
+  end
+  return aux
+end
+
+local function meshesFromRawAux(aux)
+  local figures = {}
+  for _, raw in ipairs(aux.figures or {}) do
+    local mesh = meshFromRaw(raw)
+    if mesh then
+      figures[#figures + 1] = {
+        mesh = mesh, wx = raw.wx, wz = raw.wz, y = raw.y, w = raw.w,
+      }
+    end
+  end
+  return meshFromRaw(aux.grass), meshFromRaw(aux.flowers), figures
+end
+
 -- The tall-grass rows as their own mesh: VoxelScene draws it AFTER the
 -- characters so the southern row of a grass cell still overdraws a
 -- walker's feet (characters stamp over terrain, Gen 1 style, so ordinary
@@ -957,31 +1068,67 @@ end
 local function runJob(job)
   local map = job.map
   local c = entry(job.id)
+  local function current()
+    return (gen[job.id] or 0) == job.gen
+  end
   if c.grass == nil or c.flowers == nil or c.figures == nil
      or (c.stale and c.stale.aux) then
-    local okG, grass = pcall(buildGrassMesh, map)
-    local okF, flowers = pcall(buildFlowerMesh, map)
-    local okX, figures = pcall(buildFigureMeshes, map)
-    if (gen[job.id] or 0) ~= job.gen then
-      if okG and grass and grass.release then pcall(grass.release, grass) end
-      if okF and flowers and flowers.release then
-        pcall(flowers.release, flowers)
+    local grass, flowers, figures
+    if MeshDisk.available() then
+      local aux = MeshDisk.loadAux(map)
+      if not aux then
+        aux = buildRawAux(map)
+        if not current() then return end
+        MeshDisk.saveAux(map, aux)
+        if not current() then
+          MeshDisk.invalidate(job.id)
+          return
+        end
       end
-      if okX then releaseFigures(figures) end
+      grass, flowers, figures = meshesFromRawAux(aux)
+    else
+      local okG, builtGrass = pcall(buildGrassMesh, map)
+      local okF, builtFlowers = pcall(buildFlowerMesh, map)
+      local okX, builtFigures = pcall(buildFigureMeshes, map)
+      grass = (okG and builtGrass) or false
+      flowers = (okF and builtFlowers) or false
+      figures = (okX and builtFigures) or false
+    end
+    if not current() then
+      if grass and grass.release then pcall(grass.release, grass) end
+      if flowers and flowers.release then pcall(flowers.release, flowers) end
+      releaseFigures(figures)
       return
     end
-    swapSlot(c, "grass", (okG and grass) or false)
-    swapSlot(c, "flowers", (okF and flowers) or false)
+    swapSlot(c, "grass", grass or false)
+    swapSlot(c, "flowers", flowers or false)
     releaseFigures(c.figures)
-    c.figures = (okX and figures) or false
+    c.figures = figures or false
     if c.stale then c.stale.aux = nil end
   end
-  local sink = newSink()
-  local waterSink = newSink()
-  runGeometry(map, job.slot == "body", job.masks, sink, waterSink)
-  local mesh = sink.finish()
-  local water = waterSink.finish()
-  if (gen[job.id] or 0) ~= job.gen then
+
+  local mesh, water
+  local cached = MeshDisk.loadTerrain(map, job.slot, job.masks)
+  if cached then
+    mesh = meshFromRaw(cached.terrain)
+    water = meshFromRaw(cached.water)
+  else
+    local sink, waterSink = newSink(), newSink()
+    runGeometry(map, job.slot == "body", job.masks, sink, waterSink)
+    local terrainRaw = sink.raw and sink.raw() or nil
+    local waterRaw = waterSink.raw and waterSink.raw() or nil
+    mesh, water = sink.finish(), waterSink.finish()
+    if not current() then
+      if mesh and mesh.release then pcall(mesh.release, mesh) end
+      if water and water.release then pcall(water.release, water) end
+      return
+    end
+    if terrainRaw and waterRaw then
+      MeshDisk.saveTerrain(map, job.slot, job.masks, terrainRaw, waterRaw)
+    end
+  end
+  if not current() then
+    MeshDisk.invalidate(job.id)
     if mesh and mesh.release then pcall(mesh.release, mesh) end
     if water and water.release then pcall(water.release, water) end
     return
@@ -1023,6 +1170,22 @@ end
 
 function ChunkMesher.pending()
   return #jobs
+end
+
+-- Precachers/tooling need to know when one requested slot has landed without
+-- retaining or inspecting its GPU mesh.  This is intentionally only a queue
+-- probe; a failed build and a completed build both stop being pending.
+function ChunkMesher.jobPending(mapId, bodyOnly)
+  return jobIndex[jobKey(mapId, bodyOnly and "body" or "full")] ~= nil
+end
+
+-- True once a slot has produced an answer, including a cached `false` after a
+-- failed/empty build.  Unlike peek(), this distinguishes that settled state
+-- from an invalidated slot so the background precacher retries only real
+-- invalidations, not an unsupported map forever.
+function ChunkMesher.slotKnown(map, bodyOnly)
+  local c = map and cache[map.id]
+  return c ~= nil and c[bodyOnly and "body" or "full"] ~= nil
 end
 
 -- Advance queued builds inside a per-frame time budget. Urgent jobs (the
@@ -1157,6 +1320,7 @@ end
 -- to the flat 2D path, a whole-world blink for a one-block edit.
 function ChunkMesher.refresh(mapId)
   if not mapId then return ChunkMesher.invalidate() end
+  MeshDisk.invalidate(mapId)
   local c = cache[mapId]
   -- nothing drawable cached: the plain drop costs nothing visible
   if not (c and (c.full or c.body)) then

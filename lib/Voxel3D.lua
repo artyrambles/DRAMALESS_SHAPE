@@ -204,6 +204,7 @@ local SHADER = [[
 
   uniform vec3 ghostColor;    // the flat silhouette colour
   uniform float ghost;        // 0 = shade normally, 1 = flatten to it
+  uniform float lightOn;      // 1 = scene lighting, 0 = texture true-colour
   uniform vec3 dayTint;       // the hour's light on the world; 1,1,1 = noon
   uniform Image glassMask;    // opaque where the atlas texel is window glass
   uniform vec2 glassSize;     // the mask's dimensions: tc -> atlas texels
@@ -218,9 +219,25 @@ local SHADER = [[
     // blending keeps those texels out of the depth buffer, so a model never
     // carves a transparent hole out of whatever stands behind it
     if (p.a < 0.5) discard;
+    // UNLIT is an exact texture pass, not merely a zero-weight blend with
+    // the lit result. Some GLSL drivers still evaluate both sides of mix(),
+    // including the shadow lookup, and have shown pieces of that result on
+    // battle cards even when lightOn was zero. Returning here guarantees an
+    // UNLIT card cannot receive face light, the day tint, voxel seams, glass
+    // or any cast/self shadow.
+    if (lightOn < 0.5) {
+      return vec4(mix(p.rgb, ghostColor, ghost), 1.0) * color;
+    }
+#ifdef UNLIT_ONLY
+    // A separately compiled card shader. Unlike a uniform branch in the
+    // scene shader, this program contains no live day/shadow calculation for
+    // a driver to evaluate or fold incorrectly. Ghost remains for hit flashes.
+    return vec4(mix(p.rgb, ghostColor, ghost), 1.0) * color;
+#endif
     // the hour's tint multiplies like the sun terms do: it is LIGHT, the
     // same warm or moonlit cast on every surface, not a palette swap
-    vec3 rgb = p.rgb * vShade * sunlight(vSun) * dayTint;
+    vec3 litRgb = p.rgb * vShade * sunlight(vSun) * dayTint;
+    vec3 rgb = litRgb;
 #ifdef VOXEL_GRID
     // darken what is there rather than painting a colour, so a seam across
     // dark grass and one across a white roof each stay in their own palette
@@ -268,13 +285,18 @@ local SHADER = [[
 #endif
 ]]
 
--- Two compilations of SHADER: the plain scene, and the same thing with the
--- voxel wireframe compiled in. The wireframe needs shader derivatives
+-- Three compilations of SHADER: the plain scene, the same thing with the
+-- voxel wireframe compiled in, and a card-only true-colour variant. The
+-- wireframe needs shader derivatives
 -- (fwidth), the one piece of this a driver can refuse, so it is a separate
 -- build rather than a branch -- a refusal costs the grid and nothing else.
 -- Each entry is nil = untried, false = unavailable.
 local shaders = { [false] = nil, [true] = nil }
-local activeShader = nil      -- the variant this pass bound
+local unlitShader = nil       -- nil = untried, false = unavailable
+local activeShader = nil      -- the shader draws are currently sent to
+local sceneShader = nil       -- the lit variant this pass opened with
+local flattenColor = nil      -- tightly scoped hit-flash state for shader swaps
+local flattenAmount = 0
 
 -- Scene canvases, one per NAMED SLOT. There are exactly two callers and
 -- they want different sizes -- the free-roam pass renders at the window's
@@ -309,8 +331,10 @@ local function newDepth(w, h)
   if not (love.graphics and love.graphics.newCanvas) then return nil end
   local c = nil
   for _, format in ipairs(DEPTH_FORMATS) do
-    local ok, made = pcall(love.graphics.newCanvas, w, h,
-                           { format = format, readable = true })
+    -- This is attached to the scene canvas and sampled by Water. Both are
+    -- created through PixelCanvas so Android gives them the same low DPI.
+    local ok, made = PixelCanvas.new(w, h,
+                                     { format = format, readable = true })
     if ok and made then c = made break end
   end
   if not c then return nil end
@@ -373,6 +397,18 @@ function Voxel3D.shader(grid)
   return shaders[grid] or nil
 end
 
+-- A card-only compilation with lighting removed at compile time. It keeps the
+-- scene vertex transform, so cards retain perspective, depth and placement;
+-- only their pixel colour is an exact copy of the authored texture.
+function Voxel3D.unlitShader()
+  if unlitShader == nil then
+    local ok, sh = pcall(love.graphics.newShader,
+                         "#define UNLIT_ONLY 1\n" .. SHADER)
+    unlitShader = ok and sh or false
+  end
+  return unlitShader or nil
+end
+
 -- Whether the 3D path can run at all. False on a headless test run (no
 -- love.graphics), without shader support, or where a depth canvas cannot be
 -- created -- every caller treats that as "stay on the 2D path".
@@ -425,12 +461,6 @@ end
 -- { eye = {x,y,z}, focus = {x,y,z}, fov = radians, curve = k or nil,
 --   up = {x,y,z} or nil }.
 --
--- A caller with matrices of its own -- the VR eyes, whose view comes from
--- a tracked pose and whose projection is an off-centre frustum no
--- eye/focus/fov triple can express -- sets `view` and `proj` instead, and
--- the eye/focus fields stay for everything that reasons about the camera
--- rather than projecting with it (setLook, the sky, the water's lean).
---
 -- The orbit is the free-roam camera and it is described entirely by ONE
 -- number, the pitch, because that is all a camera following the player over
 -- their own map ever needs. A staged shot -- the overworld battle's
@@ -444,13 +474,6 @@ end
 -- and the overlay all read Voxel3D.vp / Voxel3D.eye, which are set the same
 -- way either way.
 Voxel3D.camera = nil
-
--- This frame's camera RAY FAN, set by viewProjection alongside vp: the
--- world direction a canvas point looks along (see Sky.paint's `ray`).
--- Present for every free-pitch camera -- the VR eyes bring theirs
--- (VRRig.eyeCamera), a placed eye/focus camera gets one built -- and nil
--- for the orbit, whose frame-hung sky is the classic look.
-Voxel3D.skyRayLive = nil
 
 -- ------- which way, and how steeply, this camera looks
 --
@@ -498,15 +521,6 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
     -- question about which way this camera looks, and only these two answer it
     Voxel3D.focus = focus
     setLook(eye, focus)
-    -- a camera that brought its own matrices (a VR eye) projects with
-    -- them; only the clip-space Y flip is added, for the same canvas
-    -- reason as every other branch here
-    if cam.view and cam.proj then
-      Voxel3D.fovY = cam.fov
-      -- the VR eyes bring their fan with them (VRRig.eyeCamera)
-      Voxel3D.skyRayLive = cam.skyRay
-      return Mat4.mul(Mat4.mul(Mat4.scale(1, -1, 1), cam.proj), cam.view)
-    end
     local dx = eye[1] - focus[1]
     local dy = eye[2] - focus[2]
     local dz = eye[3] - focus[3]
@@ -520,35 +534,6 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
     -- the same clip-space Y flip the orbit needs, for the same reason: we
     -- bypass LOVE's transform_projection and canvas coordinates run Y down
     proj = Mat4.mul(Mat4.scale(1, -1, 1), proj)
-    -- The camera's RAY FAN, for the sky's skybox path (Sky.paint's `ray`):
-    -- a placed camera with a FREE PITCH -- the first-person rig, steered
-    -- by a mouse on the flat screen -- must not hang its gradient off the
-    -- frame, or looking up and down drags the bands with the view. Built
-    -- from the very basis the view below is: forward, the true right, the
-    -- true up, and the symmetric frustum's tangents.
-    local upv = cam.up or { 0, 1, 0 }
-    local fx, fy, fz = -dx / dist, -dy / dist, -dz / dist
-    local crx = fy * upv[3] - fz * upv[2]
-    local cry = fz * upv[1] - fx * upv[3]
-    local crz = fx * upv[2] - fy * upv[1]
-    local crl = math.sqrt(crx * crx + cry * cry + crz * crz)
-    if crl > 1e-6 then
-      crx, cry, crz = crx / crl, cry / crl, crz / crl
-      local cux = cry * fz - crz * fy
-      local cuy = crz * fx - crx * fz
-      local cuz = crx * fy - cry * fx
-      local tanY = math.tan(cam.fov / 2)
-      local tanX = tanY * (vw / vh)
-      Voxel3D.skyRayLive = {
-        base = { fx - crx * tanX + cux * tanY,
-                 fy - cry * tanX + cuy * tanY,
-                 fz - crz * tanX + cuz * tanY },
-        du = { crx * 2 * tanX, cry * 2 * tanX, crz * 2 * tanX },
-        dv = { cux * -2 * tanY, cuy * -2 * tanY, cuz * -2 * tanY },
-      }
-    else
-      Voxel3D.skyRayLive = nil
-    end
     -- world up by default, so the horizon stays level -- a placed camera
     -- that rolled with its own pitch would tip the whole arena. A caller
     -- may hand its own up: the first-person BLEND does, because its far
@@ -556,10 +541,6 @@ function Voxel3D.viewProjection(cx, cy, vw, vh)
     -- orbit's steep end degenerates against a straight-down view.
     return Mat4.mul(proj, Mat4.lookAt(eye, focus, cam.up or { 0, 1, 0 }))
   end
-
-  -- the orbit: a fixed pitch per rung, and the classic frame-hung sky --
-  -- no ray fan wanted
-  Voxel3D.skyRayLive = nil
 
   local a = Voxel.angle
   local focal = Voxel.FOCAL
@@ -628,56 +609,6 @@ function Voxel3D.horizonY(h)
   return (y / w * 0.5 + 0.5) * h
 end
 
--- The horizon as a LINE rather than a row, for a camera that can ROLL --
--- a VR eye. A head tipped sideways tips the true horizon across the
--- canvas, and a sky painted in flat rows then visibly hinges with the
--- head. So: project the flat forward direction (a point ON the vanishing
--- line) and the same direction nudged a hair of world-up (a point just
--- above it); the difference is the canvas direction "down toward the
--- ground", perpendicular to the horizon however the head is tipped.
---
--- Returns (ax, ay, edge, top): a unit axis in canvas pixels pointing from
--- sky toward ground, the horizon's signed distance along it -- a pixel at
--- canvas (x, y) is above the horizon while x*ax + y*ay < edge -- and,
--- when `elev` (radians) is given, the distance the direction that far
--- ABOVE the horizon projects to. `top` is what pins the gradient's far
--- end to a real direction in the sky: extrapolating it linearly from a
--- pixels-per-radian estimate left the bands sliding as a pitch moved the
--- horizon through the frame, because a perspective's rows are tan-spaced,
--- not angle-spaced. nil `top` (the elevated direction is outside this
--- frustum's forward hemisphere) leaves the caller its estimate. nil
--- everything with no horizon in front of this camera.
-function Voxel3D.horizonLine(w, h, elev)
-  local m, eye, focus = Voxel3D.vp, Voxel3D.eye, Voxel3D.focus
-  if not (m and eye and focus and w and h and h > 0) then return nil end
-  local dx = focus[1] - eye[1]
-  local dz = focus[3] - eye[3]
-  local len = math.sqrt(dx * dx + dz * dz)
-  if len < 1e-6 then return nil end
-  dx, dz = dx / len, dz / len
-  local function proj(vx, vy, vz)
-    local x = m[1] * vx + m[2] * vy + m[3] * vz
-    local y = m[5] * vx + m[6] * vy + m[7] * vz
-    local ww = m[13] * vx + m[14] * vy + m[15] * vz
-    if ww <= 1e-6 then return nil end
-    return (x / ww * 0.5 + 0.5) * w, (y / ww * 0.5 + 0.5) * h
-  end
-  local qx, qy = proj(dx, 0, dz)
-  if not qx then return nil end
-  local rx, ry = proj(dx, 0.02, dz)
-  if not rx then return nil end
-  local ax, ay = qx - rx, qy - ry
-  local al = math.sqrt(ax * ax + ay * ay)
-  if al < 1e-6 then ax, ay = 0, 1 else ax, ay = ax / al, ay / al end
-  local top = nil
-  if elev then
-    local ce, se = math.cos(elev), math.sin(elev)
-    local tx, ty = proj(dx * ce, se, dz * ce)
-    if tx then top = tx * ax + ty * ay end
-  end
-  return ax, ay, qx * ax + qy * ay, top
-end
-
 -- ------- the hour's light
 --
 -- What the scene shader multiplies every surface by (see dayTint in the
@@ -722,81 +653,10 @@ function Voxel3D.skyBody(w, h)
   return {
     x = (x / ww * 0.5 + 0.5) * w,
     y = (y / ww * 0.5 + 0.5) * h,
-    -- the body's WORLD direction, for the skybox path: a ray-fan caller
-    -- measures the twilight glow by the angle between a pixel's ray and
-    -- this, so the glow is pinned to the sky like the bands are (see
-    -- Sky.paint's glowDir)
-    dx = b.dx, dy = b.dy, dz = b.dz,
     moon = b.moon,
     glowAmt = amt,
     glowColor = color,
   }
-end
-
--- ------- the VR sky's world-anchored pieces
---
--- Both exist because a headset showed the shortcuts: a gradient painted
--- off the frame moved with the head that carried the frame, and a
--- screen-space disc re-snapped its cell grid with every head movement
--- and held its face square to the canvas instead of to the world. The
--- gradient's fix rides the camera record itself (skyRay -- see VRRig and
--- Sky's useRay path); the disc's is below.
-
--- The sun or moon as a QUAD IN THE WORLD: the baked cell art
--- (Sky.discImage) on a square spanned about the hour's direction, its
--- corners projected through this very eye -- so the disc is pinned to
--- the sky like the terrain is to the ground, stable under every head
--- motion, its face upright over the world. Runs inside beginScene's sky
--- window, before the depth mode is set, so the world draws over it.
-local discMesh = nil
-
-local function drawWorldDisc(w, h)
-  local b = DayNight.body()
-  if not (b and b.dy and b.dy > 0.005) then return end
-  local amt = DayNight.glow()
-  local img = Sky.discImage(b.moon, Sky.discLooming(amt, b.moon))
-  if not img then return end
-  local m = Voxel3D.vp
-  if not m then return end
-  local hl = math.sqrt(b.dx * b.dx + b.dz * b.dz)
-  if hl < 1e-6 then return end
-  -- right = horizontal, perpendicular to the direction; up completes it
-  local rx, rz = b.dz / hl, -b.dx / hl
-  local ux = -rz * b.dy
-  local uy = rz * b.dx - rx * b.dz
-  local uz = rx * b.dy
-  local ul = math.sqrt(ux * ux + uy * uy + uz * uz)
-  if ul < 1e-6 then return end
-  ux, uy, uz = ux / ul, uy / ul, uz / ul
-  if uy < 0 then ux, uy, uz = -ux, -uy, -uz end
-  -- apparent size is an ANGLE, the same fraction of the view the flat
-  -- screen's disc takes of its frame; the low sun looms exactly as there
-  local ang = Sky.DISC_FRAC * (Voxel3D.fovY or 1)
-  if Sky.discLooming(amt, b.moon) then ang = ang * 1.4 end
-  local k = math.tan(ang)
-  local verts = {}
-  local corners = { { -1, -1, 0, 1 }, { 1, -1, 1, 1 },
-                    { 1, 1, 1, 0 }, { -1, 1, 0, 0 } }
-  for i, c in ipairs(corners) do
-    local vx = b.dx + (rx * c[1] + ux * c[2]) * k
-    local vy = b.dy + (uy * c[2]) * k
-    local vz = b.dz + (rz * c[1] + uz * c[2]) * k
-    local x = m[1] * vx + m[2] * vy + m[3] * vz
-    local y = m[5] * vx + m[6] * vy + m[7] * vz
-    local ww = m[13] * vx + m[14] * vy + m[15] * vz
-    if ww <= 1e-6 then return end
-    verts[i] = { (x / ww * 0.5 + 0.5) * w, (y / ww * 0.5 + 0.5) * h,
-                 c[3], c[4] }
-  end
-  pcall(function()
-    if not discMesh then
-      discMesh = love.graphics.newMesh(4, "fan", "stream")
-    end
-    discMesh:setVertices(verts)
-    discMesh:setTexture(img)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(discMesh)
-  end)
 end
 
 -- ----------------------------------------------------------------- scene --
@@ -853,20 +713,10 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
   -- screen. The sky's dither grid is cut to it, and so is the water's --
   -- one number, so the two break up on the same checkerboard.
   Voxel3D.cell = w / math.max(1, vw or w)
-  -- A FREE-PITCH camera's sky is ANCHORED IN SPACE, where the orbit's is
-  -- glued to the frame. One discriminator: skyRayLive, set by
-  -- viewProjection above for every camera whose pitch the player steers
-  -- -- the VR eyes and the flat first-person rig alike. With a fan, the
-  -- gradient is a SKYBOX (every pixel takes its band, and its GBC
-  -- checker, from its ray's true elevation -- no motion of the camera
-  -- moves a band, only the clock recolours them) and the sun or moon
-  -- hangs in the WORLD (drawWorldDisc). Without one -- the orbit, whose
-  -- pitch is the rung's -- the classic frame-hung painting stands.
-  local skyRay = Voxel3D.skyRayLive
-  local hy = Voxel3D.horizonY(h)
-  -- where the sky's bottom edge lands, which is what the reflection
+  -- and where the sky's bottom edge lands, which is what the reflection
   -- reads its bands against (see Water). nil when nothing painted bands.
-  Voxel3D.skyEdge = (sky and sky.bands) and Sky.region(h, hy) or nil
+  Voxel3D.skyEdge = (sky and sky.bands)
+                    and Sky.region(h, Voxel3D.horizonY(h)) or nil
   if sky then
     love.graphics.clear(sky[1], sky[2], sky[3], sky[4] or 1, true, true)
     -- The sky goes down here, in the one window in this function where a
@@ -879,14 +729,8 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
     -- are the same size as the world's own and follow every resize and zoom.
     -- The banded sky also hangs the hour's sun or moon (skyBody projects it
     -- through this very camera); a flat sky has no bands and hangs nothing.
-    if skyRay and sky.bands then
-      Sky.paint(w, h, sky, nil, Voxel3D.cell, Voxel3D.skyBody(w, h),
-                nil, nil, skyRay)
-      drawWorldDisc(w, h)
-    else
-      Sky.paint(w, h, sky, hy, Voxel3D.cell,
-                sky.bands and Voxel3D.skyBody(w, h) or nil)
-    end
+    Sky.paint(w, h, sky, Voxel3D.horizonY(h), Voxel3D.cell,
+              sky.bands and Voxel3D.skyBody(w, h) or nil)
   else
     love.graphics.clear(0, 0, 0, 0, true, true)
   end
@@ -922,6 +766,11 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
   -- start out flattening everything it drew.
   pcall(sh.send, sh, "ghost", 0)
   pcall(sh.send, sh, "ghostColor", Voxel3D.GHOST_COLOR)
+  flattenColor, flattenAmount = nil, 0
+  -- Ordinary geometry receives the complete scene light. A tightly scoped
+  -- sprite pass may switch this off, but every new scene starts lit so an
+  -- interrupted frame cannot leak UNLIT into the next one.
+  pcall(sh.send, sh, "lightOn", 1)
   -- the hour's light, as the caller last set it (see Voxel3D.tint)
   pcall(sh.send, sh, "dayTint", Voxel3D.tint or { 1, 1, 1 })
   -- the window glass: the tileset's mask (or the blank -- the sampler is
@@ -949,6 +798,7 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
   -- against (so scale == 1 for anything standing at the view centre)
   local m = Voxel3D.vp
   Voxel3D.focusW = m[13] * cx + m[14] * 0 + m[15] * cy + m[16]
+  sceneShader = sh
   activeShader = sh
   active = true
   return true
@@ -1027,9 +877,12 @@ function Voxel3D.flatten(color, amount)
   if not (active and activeShader) then return end
   local sh = activeShader
   if color then
-    pcall(sh.send, sh, "ghostColor", color)
-    pcall(sh.send, sh, "ghost", math.max(0, math.min(1, amount or 1)))
+    flattenColor = color
+    flattenAmount = math.max(0, math.min(1, amount or 1))
+    pcall(sh.send, sh, "ghostColor", flattenColor)
+    pcall(sh.send, sh, "ghost", flattenAmount)
   else
+    flattenColor, flattenAmount = nil, 0
     pcall(sh.send, sh, "ghost", 0)
   end
 end
@@ -1075,7 +928,9 @@ end
 function Voxel3D.beginWater(paint)
   if not (active and canvas and held and held.depth) then return nil end
   if not held.mirror then
-    local ok, c = pcall(love.graphics.newCanvas, held.w, held.h)
+    -- Must match both the scene colour canvas and its readable depth target
+    -- in physical pixels; see PixelCanvas and newDepth above.
+    local ok, c = PixelCanvas.new(held.w, held.h)
     if not (ok and c) then return nil end
     pcall(c.setFilter, c, "nearest", "nearest")
     pcall(c.setWrap, c, "clamp", "clamp")
@@ -1129,25 +984,6 @@ function Voxel3D.endWater()
   if activeShader then love.graphics.setShader(activeShader) end
 end
 
--- A custom shader for the length of a draw, inside the pass. What makes
--- this a pair rather than a bare setShader at the call site is the way
--- BACK: the scene shader this pass bound is module-local (activeShader,
--- above), so only this file can restore it -- the same restore endWater
--- performs, without the canvas shuffle. Answers false when there is no
--- pass to come back to, and the caller skips its draw entirely.
-function Voxel3D.beginEffect(shader)
-  if not (active and shader) then return false end
-  love.graphics.setShader(shader)
-  love.graphics.setColor(1, 1, 1, 1)
-  return true
-end
-
-function Voxel3D.endEffect()
-  if not active then return end
-  love.graphics.setColor(1, 1, 1, 1)
-  if activeShader then love.graphics.setShader(activeShader) end
-end
-
 -- Whether a reflective water pass can run in this frame at all -- there is
 -- a depth texture to read. Callers use it to choose between the water
 -- shader and an ordinary terrain draw before they start moving canvases.
@@ -1178,30 +1014,6 @@ function Voxel3D.seams(on)
   if not (active and activeShader) then return end
   pcall(activeShader.send, activeShader, "gridDark",
         on and VoxelGrid.DARK or 0)
-end
-
--- ADDITIVE for the length of a draw, or nil to put the pass back the way
--- it was found.
---
--- Exactly one thing asks for this: the flame and gas primitives on a
--- STADIUM battle model (Charmander's tail, Weezing's cloud -- see
--- StadiumRig). Those are light, not surface: they are drawn over a body
--- that is already in the depth buffer and they must ADD to it rather than
--- replace it, or the flame comes out as an opaque orange sticker.
---
--- Depth WRITES go off with the blend, and for the usual reason -- a
--- translucent thing that wrote depth would punch whatever comes after it
--- out of the frame. The test stays on, so a flame behind a tree is still
--- behind the tree.
-function Voxel3D.blend(mode)
-  if not active then return end
-  if mode == "add" then
-    pcall(love.graphics.setBlendMode, "add", "alphamultiply")
-    pcall(love.graphics.setDepthMode, "lequal", false)
-  else
-    pcall(love.graphics.setBlendMode, "alpha", "alphamultiply")
-    pcall(love.graphics.setDepthMode, "lequal", true)
-  end
 end
 
 -- Whether what is drawn next may consult the glass mask. false for the
@@ -1264,10 +1076,7 @@ end
 -- one a few pixels behind it, and a figure cannot fringe itself. On the
 -- caster itself it is a no-op -- that quad is already flat.
 function Voxel3D.casterMatrix(px, py, y, mirror)
-  local m = Mat4.translate(px + 8, y, py + 8)
-  if mirror then m = Mat4.mul(m, Mat4.scale(-1, 1, 1)) end
-  return Mat4.mul(Mat4.mul(m, Mat4.translate(-8, 0, 0)),
-                  Mat4.scale(1, 1, 0))
+  return Mat4.caster(px, py, y, mirror)
 end
 
 -- FALLBACK ONLY (no shadow map: headless, or a driver that cannot make the
@@ -1328,6 +1137,49 @@ function Voxel3D.draw(mesh, texture, model, pull, sunModel)
   love.graphics.draw(mesh)
 end
 
+-- Override the hour tint for one tightly scoped draw, or restore the scene
+-- tint when called without an argument. Other lighting uniforms are untouched.
+function Voxel3D.dayTint(tint)
+  if not (active and activeShader) then return end
+  pcall(activeShader.send, activeShader, "dayTint",
+        tint or Voxel3D.tint or { 1, 1, 1 })
+end
+
+-- Draw the next geometry with or without the scene's complete lighting.
+-- Unlike dayTint(), disabling this also bypasses the shadow-map lookup and
+-- per-face shade, which is what a genuinely UNLIT texture requires.
+function Voxel3D.lighting(on)
+  if not (active and activeShader) then return end
+  if on == false then
+    local flat = Voxel3D.unlitShader()
+    if flat then
+      -- Only the vertex uniforms the flat program still consumes. Per-draw
+      -- model/pull values are sent by Voxel3D.draw immediately afterward.
+      pcall(flat.send, flat, "vp", "row", Voxel3D.vp)
+      pcall(flat.send, flat, "eye", Voxel3D.eye)
+      pcall(flat.send, flat, "curve",
+            { Voxel3D.curveX or 0, Voxel3D.curveZ or 0,
+              Voxel3D.curveK or 0 })
+      pcall(flat.send, flat, "ghost", flattenAmount)
+      pcall(flat.send, flat, "ghostColor",
+            flattenColor or Voxel3D.GHOST_COLOR)
+      love.graphics.setShader(flat)
+      activeShader = flat
+      return
+    end
+    -- Compilation refusal costs only the dedicated program. Retain the
+    -- uniform path as a compatibility fallback.
+    pcall(activeShader.send, activeShader, "lightOn", 0)
+    return
+  end
+
+  if sceneShader then
+    love.graphics.setShader(sceneShader)
+    activeShader = sceneShader
+  end
+  pcall(activeShader.send, activeShader, "lightOn", 1)
+end
+
 -- Project a world point to canvas pixels: returns (x, y, scale), or nil
 -- when the point is behind the camera. `scale` is how much bigger a thing
 -- at that depth appears than one at the focus point, so a caller can size
@@ -1372,7 +1224,7 @@ end
 -- Close the overlay begun by beginOverlay.
 function Voxel3D.endOverlay()
   love.graphics.setCanvas()
-  active, activeShader = false, nil
+  active, activeShader, sceneShader = false, nil, nil
 end
 
 -- End the pass and hand back the rendered canvas.
@@ -1382,7 +1234,7 @@ function Voxel3D.endScene()
   love.graphics.setDepthMode()
   love.graphics.setMeshCullMode("none")
   love.graphics.setCanvas()
-  active, activeShader = false, nil
+  active, activeShader, sceneShader = false, nil, nil
   return canvas
 end
 
@@ -1404,9 +1256,6 @@ function Voxel3D.invalidate()
   end
   canvas, canvasW, canvasH = nil, 0, 0
   held = nil
-  -- the VR sky's disc mesh belongs to this context like the canvases do
-  if discMesh and discMesh.release then pcall(discMesh.release, discMesh) end
-  discMesh = nil
   ShadowMap.invalidate()
   -- the sky is part of this pass and holds a shader of its own
   Sky.invalidate()

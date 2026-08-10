@@ -79,9 +79,8 @@ local BattleCam = {}
 BattleCam.RIGS = {
   -- the default: a long 11.5-degree lens from five blocks back, which is
   -- what makes one tile big enough to stand a 56-pixel mon on
--- edited by Stahl to zoom out further for the bigger models
   tele = {
-    side = 78.79, back = 144.96 * 1.5, height = 37.88 * 1.5,
+    side = 78.79, back = 144.96, height = 37.88,
     lookX = -0.26, lookY = 0.34, frameH = 34.11,
   },
   -- 44 degrees from four cells: fits inside a room the long lens cannot
@@ -177,10 +176,8 @@ BattleCam.PITCH_MOUSE = 0.0016
 -- because the rig derives its field of view from frameH and the distance
 -- together -- so moving the eye alone changes the perspective and not the
 -- framing, which is exactly what the dolly breath above is for.
--- Stahls' NOTE: tweaked these values again so you're no longer looking up charmander's nose into its brain by default. the void up there was visible.
--- looks like I accidentally reverted these changes when migrating to a proper standalone repo.
-BattleCam.ZOOM_MIN = 1.45         -- the pair filling the frame
-BattleCam.ZOOM_MAX = 3.0          -- the fight in its own landscape
+BattleCam.ZOOM_MIN = 0.45         -- the pair filling the frame
+BattleCam.ZOOM_MAX = 2.0          -- the fight in its own landscape
 BattleCam.ZOOM_STEP = 1.15
 BattleCam.ZOOM_TIME = 0.18
 
@@ -220,8 +217,71 @@ BattleCam.t = 0
 -- this battle, and having to re-find them every encounter would make them
 -- not worth setting. They are session state -- a fresh run opens on the
 -- rig's own shot, which is the one the composition is solved for.
+-- Open the battle camera where the FREE-ROAM camera was last left. The free
+-- camera orbits the PLAYER and the battle camera orbits the ARENA, so this is
+-- a best-effort mapping, not an exact repro: zoom maps 1:1 (both are "how
+-- much world the frame holds"), pitch maps by angle, and orbit maps the free
+-- look-yaw across the battle's full orbit swing. Reads the free-camera modules
+-- lazily (pcall) so there is no load-time require cycle with them.
+function BattleCam.seedFromFreeCamera()
+  local okT, ThirdPerson = pcall(require, "ThirdPerson")
+  local okF, FirstPerson = pcall(require, "FirstPerson")
+  if not (okT and okF) then return false end
+
+  -- Read the LAST-KNOWN free-roam attitude, captured into FirstPerson.last*
+  -- / ThirdPerson.lastZoom WHILE the freecam was engaged. The live values are
+  -- stale during a battle (the freecam is not driving) and reset to the sprite
+  -- facing on the frame the rung is re-entered -- so seeding from them would
+  -- open every battle where the player happened to be looking, not where they
+  -- last left the freecam. Fall back to the live numbers only on the very
+  -- first run, before lastKnown has been populated.
+  local yaw   = FirstPerson.lastYaw   or FirstPerson.yaw   or 0
+  local pitch = FirstPerson.lastPitch or FirstPerson.pitch or 0
+  local zoom  = ThirdPerson.lastZoom  or ThirdPerson.zoom  or 1
+
+  -- If there is no freecam history AND the battle camera was never steered,
+  -- leave it at the solved default -- nothing to seed from. When there IS
+  -- history, always open where the freecam was last left (the saved drift).
+  if FirstPerson.lastYaw == nil
+     and BattleCam.orbitGoal == 0
+     and BattleCam.pitchGoal == 0
+     and BattleCam.zoomGoal == 1 then
+    return false
+  end
+
+  -- zoom: the free camera's eased zoom, clamped to the battle's own range
+  local z = math.max(BattleCam.ZOOM_MIN, math.min(BattleCam.ZOOM_MAX, zoom))
+
+  -- pitch: free look-pitch (radians, +down) over the battle's pitch range
+  local p = pitch / BattleCam.PITCH_RANGE
+  p = math.max(-1, math.min(1, p))
+
+  -- orbit: free look-yaw (world radians) across the battle's full orbit swing
+  local o = yaw / (2 * math.pi)
+  o = math.max(-0.5, math.min(0.5, o))
+
+  BattleCam.orbit,     BattleCam.orbitGoal     = o, o
+  BattleCam.pitch,     BattleCam.pitchGoal     = p, p
+  BattleCam.zoom,      BattleCam.zoomGoal      = z, z
+  return true
+end
+
 function BattleCam.reset()
-  BattleCam.t = 0
+  -- NOTE: the drift phase (BattleCam.t) is deliberately NOT reset here. The
+  -- drift is a slow parallax breath that should continue from wherever the
+  -- previous battle left it, so the camera opens on the same motion rather
+  -- than snapping back to phase 0 every encounter.
+  -- Open where the FREE-ROAM camera was last left (the "saved drift" the
+  -- player actually moves) whenever we have a freecam history -- this is the
+  -- position battles should open at, and it fixes them opening on the
+  -- zoomed-in solved shot. Only with no freecam history AND a battle camera
+  -- that was explicitly steered do we keep that steered position instead.
+  -- Either way the live values start where the goals are, so frame 1 already
+  -- renders at the saved position -- no ease-in jump.
+  BattleCam.seedFromFreeCamera()
+  BattleCam.orbit = BattleCam.orbitGoal
+  BattleCam.pitch = BattleCam.pitchGoal
+  BattleCam.zoom  = BattleCam.zoomGoal
 end
 
 -- Back to the solved shot, for anything that wants the composition as
@@ -434,22 +494,7 @@ function BattleCam.rig(arena, groundY, canonical)
   -- arena's own axis, and the room the player has is all on the far side of
   -- that -- out toward square-on. (orbitRange measures exactly that room.)
   local steer = steered and -BattleCam.orbit * BattleCam.orbitRange(arena) or 0
-  -- ------- and the quarter turn the arena itself is standing at
-  --
-  -- An arena may be laid down any of the four ways (BattleArena's `turn`),
-  -- and the rig is solved for ONE of them: eye off the player's shoulder,
-  -- back down an axis that runs north-south. So the whole offset is turned
-  -- with the ground under it, which leaves the camera in exactly the same
-  -- place RELATIVE to the two mons -- same distance, same height, same
-  -- angle -- and therefore lands them on the same two screen anchors at the
-  -- same size. A turn is a fact about the map, never about the shot.
-  --
-  -- It goes in with the drift and the steer rather than beside them because
-  -- it is the same rotation about the same point; the player's own orbit is
-  -- then measured from wherever the arena starts, so both stops travel with
-  -- it and side-on stays side-on.
-  local base = math.rad(arena.turn or 0)
-  local yaw = base + steer + (fixed and 0
+  local yaw = steer + (fixed and 0
               or BattleCam.PAN_YAW * phase(BattleCam.t, BattleCam.PAN_PERIOD))
   local c, s = math.cos(yaw), math.sin(yaw)
   -- the breath scales the whole offset, height included, so the eye moves
@@ -460,12 +505,8 @@ function BattleCam.rig(arena, groundY, canonical)
   local dx = (R.side * c - R.back * s) * k
   local dz = (R.side * s + R.back * c) * k
 
-  local eye = { mx + dx, groundY * 1.5 + R.height * k, mz + dz }
-  -- the aim's own offset turns with the arena too, and with the BASE alone --
-  -- the drift and the steer swing the eye about the focus, so a focus that
-  -- followed them would take the thing being orbited around with it
-  local bc, bs = math.cos(base), math.sin(base)
-  local focus = { mx + R.lookX * bc, groundY + R.lookY, mz + R.lookX * bs }
+  local eye = { mx + dx, groundY + R.height * k, mz + dz }
+  local focus = { mx + R.lookX, groundY + R.lookY, mz }
 
   -- and the climb: the eye swung UP about the focus, at a constant radius.
   -- About the focus so the aim stays nailed to the two mons and only the
@@ -492,7 +533,7 @@ function BattleCam.rig(arena, groundY, canonical)
   local ex = eye[1] - focus[1]
   local ey = eye[2] - focus[2]
   local ez = eye[3] - focus[3]
-  local dist = math.max(2, math.sqrt(ex * ex + ey * ey + ez * ez))
+  local dist = math.max(1, math.sqrt(ex * ex + ey * ey + ez * ez))
   local horiz = math.sqrt(ex * ex + ez * ez)
 
   -- The lens carries the player's zoom: how much world the frame holds is
@@ -505,7 +546,7 @@ function BattleCam.rig(arena, groundY, canonical)
   return {
     eye = eye,
     focus = focus,
-    fov = 1 * math.atan((frameH / 2) / dist),
+    fov = 2 * math.atan((frameH / 2) / dist),
     -- the world curve is a free-roam flourish that bends the horizon away
     -- from the player; a fixed camera on a staged shot has no player to bend
     -- around, and the bend would tip the arena floor out from under the mons

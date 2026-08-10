@@ -57,25 +57,22 @@
 -- and they come back untouched because that is what their own shape says, not
 -- because they were special-cased.
 --
--- The drain/mouth cut is for a pic STANDING ON THE MAP, where a mouth is a
--- real hole with real ground behind it. A pic PINNED TO THE MENU has no such
--- hole to be: under BACK SPRITES the player's mon is drawn in the GB's own
--- slot with its feet flush on the text box (BattleState.backPlacement pins
--- row 96), so the only thing under its lowest row is white box. Nothing can
--- reach it from below, whatever the opening's width, and the caller says so
--- by asking for a SEALED BOTTOM -- for which the rule stops being a heuristic
--- and becomes exact: paper is whatever the background cannot walk to from the
--- left, the right or the top.
+-- The drain/mouth cut is for native TRAINER art standing on the map, where a
+-- mouth between two legs is a real hole with real ground behind it. Native
+-- Pokemon use a SEALED BOTTOM whether standing in the world or pinned to the
+-- menu: pale Gen 1 bodies commonly run their keyed shade-0 paper right down
+-- to that edge, and there is no reliable width distinction between that body
+-- and a trainer's stride. With the bottom sealed, paper is whatever the
+-- background cannot walk to from the left, the right or the top.
 --
 -- That is the difference between a Pikachu that reads as a mon and one that
 -- reads as wireframe. The pale-bodied back pics -- Pikachu, Seel, Dewgong,
 -- Chansey, Jigglypuff -- are drawn as OUTLINES: everything inside the ink is
 -- shade 0 and every one of them is keyed away, so the figure is a rim with the
--- arena showing through it. Each one also has a wide opening along its bottom,
--- which the drain cut correctly reads as a mouth and the sealed bottom
--- correctly does not. Twelve of this game's 151 back pics turn on it; the
--- other 139 come back byte-identical either way, because they had nothing
--- under them the flood was getting in through.
+-- arena showing through it. Each one also has a wide opening along its bottom;
+-- the Pokemon-specific sealed call prevents that opening from draining its
+-- body. Ordinary solid sprites come back byte-identical because they have no
+-- paper for the flood to restore.
 --
 -- The silhouette is untouched, so the mon still cuts cleanly against the
 -- world; only its insides stop being see-through.

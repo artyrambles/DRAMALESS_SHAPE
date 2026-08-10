@@ -105,60 +105,9 @@ local CELL = 16
 -- `player` are the offsets, from the shape's north-west corner, of the two
 -- cells a mon stands on.
 BattleArena.SHAPES = {
-  { id = "wide",   w = 3, h = 7, enemy = { 1, 1 }, player = { 1, 4 } },
-  { id = "narrow", w = 1, h = 5, enemy = { 0, 0 }, player = { 0, 3 } },
+  { id = "wide",   w = 3, h = 6, enemy = { 1, 1 }, player = { 1, 4 } },
+  { id = "narrow", w = 1, h = 4, enemy = { 0, 0 }, player = { 0, 3 } },
 }
-
--- ------- which way round the fight stands
---
--- Both shapes above are drawn north-south, with the foe at the top and the
--- player below it, and the camera is solved for that: it sits off the
--- player's shoulder, low and back down the arena's own axis. `turn` swings
--- the WHOLE staging a quarter at a time -- the footprint, the two cells, and
--- the camera with them -- so the composition on screen is identical and only
--- the ground under it is different.
---
--- It buys two things.
---
--- A footprint that FITS. The wide shape is three cells by six; an east-west
--- corridor two cells deep has no room for it standing up and all the room in
--- the world for it lying down. Half the maps in Kanto run the other way from
--- the one shape this mode was drawn in.
---
--- And a BACKDROP. A quarter turn moves the camera to a different side of the
--- same patch of ground, so the wall behind the pair becomes the window
--- behind them, or the cliff becomes the valley. Nothing about the shot's
--- geometry changes -- the mons land on the same two screen anchors at the
--- same size -- so this is purely a choice about what is behind them, made
--- per map by somebody looking at it.
---
--- Written in DEGREES in data/battle_arenas.lua (`turn = 90`) because that is
--- what it is; handled as quarter turns everywhere below.
-local function quarters(turn)
-  local q = math.floor(((tonumber(turn) or 0) / 90) + 0.5)
-  return ((q % 4) + 4) % 4
-end
-
-BattleArena.quarters = quarters
-
--- The footprint a shape covers once turned: a quarter or three of a turn
--- swaps how far it reaches in each direction, which is the whole reason a
--- corridor takes one and not the other.
-function BattleArena.extent(shape, turn)
-  if quarters(turn) % 2 == 1 then return shape.h, shape.w end
-  return shape.w, shape.h
-end
-
--- Where a cell offset inside the shape ends up under the same turn, measured
--- from the turned footprint's own north-west corner -- so the corner an entry
--- names stays the corner, whichever way the fight faces from it.
-local function spin(shape, turn, ox, oy)
-  local q = quarters(turn)
-  if q == 1 then return shape.h - 1 - oy, ox end
-  if q == 2 then return shape.w - 1 - ox, shape.h - 1 - oy end
-  if q == 3 then return oy, shape.w - 1 - ox end
-  return ox, oy
-end
 
 -- Whether a cell is open ground for the purpose above.
 --
@@ -225,19 +174,12 @@ end
 
 -- Build the record the renderer reads: the two mons' cells and, in world
 -- pixels, the centre of each and of the pair.
-local function place(shape, x, y, turn)
-  local eox, eoy = spin(shape, turn, shape.enemy[1], shape.enemy[2])
-  local pox, poy = spin(shape, turn, shape.player[1], shape.player[2])
-  local ex, ey = x + eox, y + eoy
-  local px, py = x + pox, y + poy
-  local w, h = BattleArena.extent(shape, turn)
+local function place(shape, x, y)
+  local ex, ey = x + shape.enemy[1], y + shape.enemy[2]
+  local px, py = x + shape.player[1], y + shape.player[2]
   local arena = {
     shape = shape.id,
-    -- carried in degrees, so everything downstream that reasons about the
-    -- shot -- the camera's base yaw above all -- reads the same number the
-    -- data file was written with
-    turn = quarters(turn) * 90,
-    x = x, y = y, w = w, h = h,
+    x = x, y = y, w = shape.w, h = shape.h,
     enemyCell = { ex, ey },
     playerCell = { px, py },
     -- world-pixel centres of the two cells a mon stands on
@@ -300,9 +242,6 @@ end
 -- Whether both mons would be in plain view from the battle camera.
 function BattleArena.clearance(map, arena)
   local BattleCam = V.require("BattleCam")
-  -- the CANONICAL shot: whether a fight fits somewhere is a fact about the
-  -- ground, so it must not depend on the drift's phase or on where the
-  -- player last swung the camera (see BattleCam.rig's third argument)
   local ok, rig = pcall(BattleCam.rig, arena, 0, true)
   if not (ok and rig and rig.eye) then return true end
   local eye = rig.eye
@@ -360,12 +299,8 @@ function BattleArena.find(map, fromX, fromY, surfing)
       -- ocean rather than on a scrap of beach at the edge of the map. Land
       -- entries are unaffected: land passes the test either way.
       local grid, gw = openGrid(host, true)
-      -- measured against the TURNED footprint: an entry that lies the arena
-      -- down an east-west corridor covers different ground from the one that
-      -- stands it up, and the fit test is the thing that has to know
-      local fw, fh = BattleArena.extent(shape, pick.turn)
-      if fits(grid, gw, pick.x, pick.y, fw, fh) then
-        local arena = place(shape, pick.x, pick.y, pick.turn)
+      if fits(grid, gw, pick.x, pick.y, shape.w, shape.h) then
+        local arena = place(shape, pick.x, pick.y)
         arena.map = host
         -- which camera rig this spot is framed for; nil is the default long
         -- lens, "close" the short one small rooms need (see BattleCam)
@@ -383,11 +318,9 @@ end
 -- The arena at a given north-west corner, whatever the map says about it.
 -- The authoring tool's manual override: a spot chosen by eye rather than by
 -- the search, so it can be photographed and judged before it is written down.
-function BattleArena.at(x, y, shapeId, turn)
+function BattleArena.at(x, y, shapeId)
   for _, shape in ipairs(BattleArena.SHAPES) do
-    if shape.id == (shapeId or "wide") then
-      return place(shape, x, y, turn)
-    end
+    if shape.id == (shapeId or "wide") then return place(shape, x, y) end
   end
   return nil
 end

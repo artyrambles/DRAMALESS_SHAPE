@@ -25,9 +25,16 @@
 -- the engine's TILT mode -- is engine plumbing driven by the records
 -- below.  This file declares; lib/ draws.
 --
--- Nothing here reaches collision, movement, triggers or scripts.  Voxel
--- mode is purely presentational: it changes what the world LOOKS like and
--- nothing about what it IS.
+-- Voxel mode is presentational: it changes what the world LOOKS like and
+-- nothing about what it IS.  ONE rung is the deliberate exception. 1ST --
+-- the first-person camera -- replaces the grid WALK with a free,
+-- camera-relative one while it is selected (lib/FreeMove.lua), because a
+-- head you can steer with a mouse demands feet that go where it looks.
+-- Even there the game is untouched: the walk asks the engine's own
+-- collision the same questions a grid step asks, keeps the player's
+-- logical cell synced, and fires the engine's own landing pipeline per
+-- cell crossed -- warps, encounters, ledges, gates and scripts all run
+-- exactly as themselves. Step off the rung and the grid walk is back.
 
 local mod = ...
 
@@ -87,26 +94,43 @@ local Voxel3D = V.require("Voxel3D")
 local VoxelScene = V.require("VoxelScene")
 local TiltShift = V.require("TiltShift")
 local ChunkMesher = V.require("ChunkMesher")
+local VoxelPrecache = V.require("VoxelPrecache")
+local VoxelLoadingVeil = V.require("VoxelLoadingVeil")
 local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
 local OverworldBattle = V.require("OverworldBattle")
+local BattlePresentation = V.require("BattlePresentation")
+local BattleArt = V.require("BattleArt")
+local UiBackplates = V.require("UiBackplates")
 local BattleExit = V.require("BattleExit")
 local DayNight = V.require("DayNight")
 local DayTint = V.require("DayTint")
 local Water = V.require("Water")
+local Shadows = V.require("Shadows")
 local AntiAlias = V.require("AntiAlias")
 local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
 local CamControl = V.require("CamControl")
 local Quality = V.require("Quality")
 local VR = V.require("VR")
-local Horde = V.require("Horde")
 
 -- Forward declaration: the voxel pipeline's update hook (registered below)
 -- calls this, and it is defined further down with the settings it drives.
 -- Declared rather than left global -- a mod writing to _G would leak into
 -- every other mod's namespace.
 local applyFull
+
+-- WORLD depends on the engine's flat battle compositing the frozen overworld
+-- behind its UI. A staged 3D battle owns that space instead, so WORLD cannot
+-- be represented and falls back to WHITE. BLACK is an ordinary opaque
+-- letterbox and remains a valid explicit choice.
+local function ensureBattleBgCompatible(opts)
+  if opts and opts.battleBg == "world" then
+    opts.battleBg = "white"
+    return true
+  end
+  return false
+end
 
 -- The last VOID FILL the terrain was meshed under; see the update hook.
 -- The scene canvas's size, in FRAMEBUFFER PIXELS.
@@ -175,6 +199,16 @@ mod.content.render_pipelines:register("voxel", {
   -- pump slice -- so stepping out of a door lands on terrain that is
   -- already there instead of a flat flash.
   update = function(dt, level)
+    -- WORLD is only valid for the engine's flat 2D battle and composites as
+    -- broken bars with the 3D diorama (there is no frozen overworld to show
+    -- through). Correct that incompatible mode at the top of every update
+    -- tick -- not gated on FULL -- while preserving the valid BLACK option.
+    -- Persists on change only, never every frame.
+    local Game = require("src.core.Game")
+    local o = Game.save and Game.save.options
+    if ensureBattleBgCompatible(o) then
+      if Game.writeOptions then pcall(Game.writeOptions, Game) end
+    end
     -- FULL is a preset, so it is applied ON THE PRESS rather than held every
     -- frame: it SETS the other rows and then leaves them alone. Holding them
     -- would make the zoom keys and the wheel dead while the mode was on, and
@@ -213,7 +247,6 @@ mod.content.render_pipelines:register("voxel", {
     pcall(function()
       V.require("StadiumRomPick").poll(require("src.core.Game"))
     end)
-    Horde.update(dt)
     -- VOID FILL picks the block the border ring is made of, and in this
     -- mode that ring is BAKED INTO THE MESH rather than drawn each frame.
     -- So the option has to reach the cache or nothing happens on screen
@@ -230,20 +263,13 @@ mod.content.render_pipelines:register("voxel", {
     local ow = Game and Game.overworld
     if ow and ow.map and ow.camera then
       pcall(VoxelScene.prefetch, ow)
+      -- Once the visible neighbourhood is ready, cooperatively prepare the
+      -- current map's real warp/connection destinations.  This is automatic:
+      -- no prebuild button, startup pause or whole-world resident cache.
+      pcall(VoxelPrecache.update, Game)
     end
-    -- COVERED says nothing of the world is on screen to hitch, which is
-    -- worth four times the slice (see ChunkMesher's own note). Another
-    -- scene on top of the stack is one way that happens. A WARP is the
-    -- other, and it was the one missing: a door's fade is drawn BY the
-    -- overworld, so the stack is still pointing AT the overworld for
-    -- exactly the frames the fade is covering, and the test below answers
-    -- "visible" for every one of them. Which is how the fat slice written
-    -- for a door fade never once ran under a door fade. `transitioning`
-    -- is the flag the rest of the mod already reads as "stand down, the
-    -- screen is not the player's right now" (Weather, AmbientSound,
-    -- WildRoamers all gate on it), and it is the honest answer here too.
-    ChunkMesher.pump((Game and Game.stack and Game.stack:top() ~= ow)
-                     or (ow and ow.transitioning) or false)
+    ChunkMesher.pump(Game and Game.stack
+                     and Game.stack:top() ~= ow)
   end,
 
   drawWorld = function(ctx)
@@ -274,7 +300,17 @@ mod.content.render_pipelines:register("voxel", {
     local rw, rh = AntiAlias.expand(sw, sh)
     local canvas = VoxelScene.render(ctx.state, rw, rh,
                                      ctx.vw, ctx.vh, ctx.paletteFor)
-    if not canvas then return nil end   -- fall back to the 2D path
+    if not canvas then
+      local map = ctx.state and ctx.state.map
+      local generating = map and not ChunkMesher.slotKnown(map, false)
+      if generating then
+        -- A nil world would expose the engine's ordinary 2D renderer. Keep a
+        -- cold boot/door transition opaque until the requested FULL voxel mesh
+        -- has actually landed, then reveal the first finished 3D frame.
+        return VoxelLoadingVeil.get(sw, sh)
+      end
+      return nil                    -- genuine build/driver failure: safe 2D
+    end
     if Voxel3D.beginOverlay() then
       -- the FX closures are ordinary 2D draws sized in DISPLAY pixels, and
       -- they are drawing into the supersampled canvas alongside everything
@@ -294,6 +330,7 @@ mod.content.render_pipelines:register("voxel", {
     Voxel3D.invalidate()
     OverworldBattle.invalidate()
     AntiAlias.invalidate()
+    VoxelLoadingVeil.invalidate()
     ChunkMesher.invalidate()   -- no map id = every cached mesh
     VR.invalidate()            -- the mirror, and FBO ids of dead canvases
   end,
@@ -314,11 +351,8 @@ mod.content.render_pipelines:register("tiltshift", {
   -- worldPresent, not present: the blur belongs on the diorama, not on the
   -- dialog box in front of it.  A pass-through when the level is 0 or the
   -- shader is unavailable, so the frame is untouched in every other case.
-  -- When the blur actually ran, re-paint the orientation radar on top so
-  -- it is not smeared with the diorama (drawWorld already painted it once).
   worldPresent = function(canvas)
-    canvas = TiltShift.apply(canvas)
-    return canvas
+    return TiltShift.apply(canvas)
   end,
 
   invalidate = function()
@@ -364,6 +398,9 @@ applyFull = function(level)
   -- the horizon flat. The curve bends the world away from a walking player,
   -- which fights a fixed diorama framing
   WorldCurve.setting:setIndex(1, Game)
+  -- and the water reflecting everything it can: FULL is the diorama at its
+  -- most photographed, and a lake with the sky and the shoreline in it is
+  -- most of what makes the model read as being outdoors
   Water.setting:setIndex(1, Game)
   -- and the view fitted to the window
   opts.zoom = 0
@@ -373,15 +410,20 @@ applyFull = function(level)
   -- battle rows stay on the menu under FULL (see the rows hook), so this is
   -- where the preset puts them and not where they are held.
   OverworldBattle.setting:setIndex(1, Game)
-  -- with both mons out there on it: BACK SPRITES keeps the player's own on the
-  -- menu, which is the one part of the old screen FULL is least about. Set the
-  -- same way, and changed back on the same row a keypress later.
-  OverworldBattle.backSetting:setIndex(1, Game)
+  -- default to the classic player back view. The foe remains world-placed;
+  -- AUTO decides whether the selected back belongs in-world or on OG UI.
+  BattleArt.viewSetting:setIndex(2, Game)
   -- and the battle screen the staged fight is composed for. WIDE re-lays that
   -- screen out on a 304x144 surface, which moves every anchor the arena camera
   -- is solved against (OverworldBattle.forceOG); FULL has just switched staged
   -- fights on, so the layout follows them.
   OverworldBattle.forceOG(Game)
+  -- BATTLE BG: WORLD leaves the frozen overworld showing through a battle and
+  -- is only valid for the engine's flat 2D battle; with the 3D diorama there
+  -- is no "old system" to show through, so WORLD composites as broken dark
+  -- bars. Correct WORLD to WHITE while preserving BLACK, which is already an
+  -- opaque field and needs no world-behind-battle path.
+  ensureBattleBgCompatible(opts)
   -- and the sky on the clock on the wall: FULL pins DAYTIME to SYNC. Unlike
   -- the rest of the preset this one IS held, not just set -- the row is off
   -- the menu while FULL owns it (the rows hook below), so a value changed
@@ -420,6 +462,11 @@ local SETTINGS = {
     .. "shoreline, the trees and the buildings behind it; SKY is the sky, "
     .. "the sun and the moon alone, which is most of the look for a "
     .. "fraction of the cost." },
+  { Shadows.setting,
+    "Enable shadows. OFF removes both the real cast-shadow map and its flat "
+    .. "fallback from free roam and staged battles; UNLIT battle cards also "
+    .. "decline shadows even while this global switch is ON.",
+    full = true },
   -- `full` marks a row FULL does not take away. FULL owns the diorama's own
   -- knobs; what a battle is drawn over, and how it is framed, are not that.
   -- Off the OPTIONS menu while VR is on: the headset REQUIRES staged
@@ -449,34 +496,112 @@ local SETTINGS = {
     .. "original slot, instead of standing it on the map facing the foe. "
     .. "The foe is still out there on its own tile.",
     when = function() return stagedBattles() and not VR.enabled() end,
+  -- HUD SCALE lives with the battle rows: SCALED is the mod's default HUD
+  -- (it grows with the battle zoom); OG pins it to the window-fit scale like
+  -- upstream gen1recomp's player HUD, so an external XP-bar mod -- which this
+  -- mod does NOT provide -- lines up with a window-scaling HUD.
+  { OverworldBattle.hudScaleSetting,
+    "Size of the player and opponent HUD. SCALED grows with the battle "
+    .. "zoom (the mod default); OG pins it to the window-fit scale like "
+    .. "upstream gen1recomp's player HUD, so an external XP-bar mod -- which "
+    .. "this mod does not include -- lines up with a window-scaling HUD.",
     full = true },
+  -- Only offered while a fight can actually be staged on the map.
+  { BattleArt.setting,
+    "Use optional PNGs from assets/battle in fights. Missing art falls "
+    .. "back to the ROM. STATIC is the zero-configuration default.",
+    when = function() return stagedBattles() end, full = true },
+  { BattleArt.trainerSetting,
+    "Choose the static opponent trainer collection. A class missing from "
+    .. "the selected generation falls back directly to its ROM portrait.",
+    when = function()
+      return stagedBattles() and BattleArt.setting:get() ~= "rom"
+    end, full = true },
+  { BattleArt.playerArtSetting,
+    "Choose the player trainer's static battle-intro portrait. A missing "
+    .. "named choice tries player.png, then ROM. PNG uses player.png "
+    .. "directly. BATTLE ART: ROM pins this row to ROM.",
+    when = function()
+      local mode = BattleArt.setting:get()
+      return stagedBattles() and (mode == "static" or mode == "rom")
+    end, full = true },
+  { BattleArt.playerAnimationSetting,
+    "Choose player.png as a static portrait or a five-frame player trainer "
+    .. "atlas under ANIMATED. Atlas playback starts with the leftward intro "
+    .. "slide, runs once, and never loops. Missing art and ROM retain the "
+    .. "engine portrait.",
+    when = function()
+      return stagedBattles() and BattleArt.setting:get() == "animated"
+    end, full = true },
+  { BattleArt.frontAnimationSetting,
+    "Choose the front generation used by BATTLE ART: ANIMATED. GEN 1 reads "
+    .. "single-frame PNGs; GEN 2-5 read atlases. STATIC ignores this row. "
+    .. "Missing art falls directly back to ROM.",
+    when = function()
+      return stagedBattles() and BattleArt.setting:get() == "animated"
+    end, full = true },
+  { BattleArt.backAnimationSetting,
+    "Choose the player back-art generation. STATIC reads only a PNG from "
+    .. "back-static/GEN for every choice. ANIMATED reads static GEN 1, 2, "
+    .. "and 4 PNGs, or animated GEN 3 and 5 atlases. Missing art falls "
+    .. "back to the ROM.",
+    when = function()
+      return stagedBattles() and BattleArt.setting:get() ~= "rom"
+    end, full = true },
+  { BattleArt.duplicateSetting,
+    "Choose who owns Pokemon pictures when another sprite mod is installed. "
+    .. "BATTLE ART keeps this mod's selected front and back collections on "
+    .. "top, preventing a second modded picture behind them. MODDED gives "
+    .. "mod-provided and shiny override art priority. This replaces both old "
+    .. "FRONT SHINY FIX and BACK SHINY FIX rows.",
+    when = function() return stagedBattles() end, full = true },
+  { BattleArt.viewSetting,
+    "Show the player's Pokemon from the front or back. Supplied art stays "
+    .. "world-placed; a missing selected back falls back to the ROM UI pic.",
+    when = function() return stagedBattles() end, full = true },
+  { BattleArt.frontFlipSetting,
+    "Orient the player-side FRONT SPRITES card. BATTLE ART mirrors ordinary "
+    .. "front art so it faces the opponent. DEFAULT preserves the image's "
+    .. "authored direction, for sprite mods that already supply a flipped "
+    .. "player picture such as Crystal Animated Sprites.",
+    when = function() return stagedBattles() end, full = true },
+  { BattleArt.backPlacementSetting,
+    "Place player back art automatically, force it into the 3D world, or "
+    .. "use gen1recomp's OG UI anchor. AUTO keeps STATIC fallbacks in the "
+    .. "world and ANIMATED/ROM fallbacks on the UI.",
+    when = function() return stagedBattles() end, full = true },
   { DayNight.setting,
     "What time it is outdoors: pin the sky to DAY, NIGHT, DUSK or DAWN, "
     .. "let CYCLE run it -- ten minutes of sun, ten of moon, with the "
     .. "shadows, the sky and the light following -- or SYNC it to the "
     .. "clock on the wall, so Kanto's evening falls when yours does." },
-    -- ------- 1.66 UI backplates (see lib/UiBackplates.lua) -------
-    -- { UiBackplates.spriteLight,
-    --   "SHADED lets the mons receive the world's day tint and cast shadows; "
-    --   .. "UNLIT draws them flat and full bright. UNLIT is what the white "
-    --   .. "arena fill needs, and what the OG battle's sprites look like.",
-    --   when = function() return stagedBattles() end, full = true },
-    -- { UiBackplates.arenaFill,
-    --   "WHITE draws a solid white layer in front of the whole voxel world, "
-    --   .. "with only the mons, their attack animations and the menus above it "
-    --   .. "-- the step between the OG battle and the full 3D one. Forces SPRITE "
-    --   .. "LIGHT: UNLIT so the sprites stay flat and true-colour with no night "
-    --   .. "tint (as in the traditional games).",
-    --   when = function() return stagedBattles() end, full = true },
-    -- The battle box is ALWAYS an opaque white panel with black ink (see
-    -- BattleState:drawTextArea), so TEXTBOX FILL was dropped -- no option row.
-    -- Marked `full` for the opposite reason the battle rows are: this is not a
-    -- knob on the look at all, it is what the look COSTS. FULL is a preset for
-    -- the diorama, not a licence to spend four times the fill rate on the
-    -- machine it happens to be running on, so it neither sets this nor takes
-    -- the row away -- the player decides what their hardware can carry, from
-    -- inside FULL like anywhere else.
-  -- Marked `full` for the opposite reason the battle rows are: this is not a
+  -- ------- 1.66 UI backplates (see lib/UiBackplates.lua) -------
+  { UiBackplates.spriteLight,
+    "SHADED lets the mons receive the world's day tint and cast shadows; "
+    .. "UNLIT draws them flat and full bright. UNLIT is what the white "
+    .. "arena fill needs, and what the OG battle's sprites look like.",
+    when = function() return stagedBattles() end, full = true },
+  { UiBackplates.hudColor,
+    "COLOR keeps the engine's black names, levels and HP text plus its "
+    .. "green/yellow/red HP bars, with a bright one-pixel shadow for the "
+    .. "world behind them. INVERTED uses white HUD ink with a dark shadow. "
+    .. "ARENA FILL: WHITE always uses COLOR so the HUD remains visible.",
+    when = function() return stagedBattles() end, full = true },
+  { UiBackplates.arenaFill,
+    "WHITE draws a solid white layer in front of the whole voxel world, "
+    .. "with only the mons, their attack animations and the menus above it "
+    .. "-- the step between the OG battle and the full 3D one. Forces SPRITE "
+    .. "LIGHT: UNLIT so the sprites stay flat and true-colour with no night "
+    .. "tint (as in the traditional games).",
+    when = function() return stagedBattles() end, full = true },
+  { UiBackplates.textboxFill,
+    "WHITE keeps the latest build's opaque paper. HALF draws translucent "
+    .. "black, BLACK draws opaque black, and OFF removes only the paper. "
+    .. "Dark and transparent modes use white ink with a one-pixel shadow. "
+    .. "The fill is drawn with the engine textbox so BATTLE SIZE FIXED and "
+    .. "FILL stay aligned. ARENA FILL: WHITE overrides this row to WHITE.",
+    when = function() return stagedBattles() end, full = true },
+  -- AA is marked `full` for the opposite reason the battle rows are: this is not a
   -- knob on the look at all, it is what the look COSTS. FULL is a preset for
   -- the diorama, not a licence to spend four times the fill rate on the
   -- machine it happens to be running on, so it neither sets this nor takes
@@ -532,16 +657,15 @@ local SETTINGS = {
 }
 
 local schema = {}
-for _, entry in ipairs(SETTINGS) do
-  -- the VR rows are absent from the mod manager's page too where the
-  -- platform cannot do VR at all -- the OPTIONS menu's `when` gates are
-  -- situational (a row hidden for now), this one is existential
-  local vrOnly = entry[1] == VR.setting or entry[1] == VR.smoothTurn
-  if not vrOnly or VR.supported() then
-    schema[#schema + 1] = entry[1]:schema(entry[2])
-  end
+for i, entry in ipairs(SETTINGS) do
+  schema[i] = entry[1]:schema(entry[2])
 end
 mod.options:define(schema)
+
+-- Read the raw pre-1.7.7 keys before duplicateFix's schema default can be
+-- mistaken for an explicit choice. The same helper runs again when a real
+-- save is attached below; this early call covers the already-loaded profile.
+pcall(BattleArt.migrateDuplicateSetting)
 
 -- ------- this mod's hotkeys
 --
@@ -577,62 +701,14 @@ mod.options:define(schema)
 -- applies its own gate and ladder, and the three lines after it are the
 -- engine's own (syncOptions, the tilt exclusion, writeOptions).
 
--- local HOTKEYS = {
---   ["3"] = "pipeline",           -- voxel, by its declared hotkey
---   ["6"] = "pipeline",           -- tiltshift, likewise
---   ["5"] = VoxelGrid.setting,
---   ["7"] = WorldCurve.setting,
---   ["8"] = OverworldBattle.setting,
---   ["9"] = Water.setting,
--- }
-
--- hotkeys are now variable.
 local HOTKEYS = {
   [KEY_VOXEL]  = "pipeline",
   [KEY_TILT]   = "pipeline",
   [KEY_GRID]   = VoxelGrid.setting,
   [KEY_CURVE]  = WorldCurve.setting,
   [KEY_BATTLE] = OverworldBattle.setting
+  ["9"] = Water.setting,
 }
-
--- One step of the VOXEL angle ladder: everything a "3" press does, named
--- so the pad's SELECT button (below) can make exactly the same step. The
--- gate is the registry's own; the tilt/GBC FX clearing is the engine work
--- the key has always delegated (see the wrap below for why).
-local function cycleVoxel(game)
-  local Pipelines = require("src.render.Pipelines")
-  local top = game.stack and game.stack:top()
-  if not Pipelines.canToggle("voxel", top, game.overworld) then return false end
-  Pipelines.setLevel("voxel", Voxel.nextHotkeyLevel(Pipelines.level("voxel")))
-  Pipelines.syncOptions(game.save.options)
-  game.save.options.tilt = 0
-  game.save.options.gbcfx = 0
-  require("src.render.GBCFX").setLevel(0)
-  require("src.render.Tilt").setLevel(game.save.options.tilt or 0)
-  game:writeOptions()
-  return true
-
-  -- local top = game.stack and game.stack:top()
-  -- if not Pipelines.canToggle("voxel", top, game.overworld) then return false end
-  -- Pipelines.setLevel("voxel", Voxel.nextHotkeyLevel(Pipelines.level("voxel")))
-  -- Pipelines.syncOptions(game.save.options)
-  -- -- 3 is the key that used to turn TILT on and sits next to the one that
-  -- -- used to turn GBC FX on, and this mod has taken both away. A player who
-  -- -- left either running before enabling the mod would otherwise have no
-  -- -- way back to off, and both fight the diorama -- so the VOXEL step
-  -- -- clears them on EVERY press, not just the press that switches on.
-  -- game.save.options.tilt = 0
-  -- game.save.options.gbcfx = 0
-  -- require("src.render.GBCFX").setLevel(0)
-  -- require("src.render.Tilt").setLevel(game.save.options.tilt or 0)
-  -- game:writeOptions()
-  -- return true
-end
-
--- The VR stick click makes this same step (VR.stepView): the function is
--- a local of this file, so the handoff is explicit rather than a
--- reimplementation drifting out of date in lib/VR.lua.
---VR.cycleVoxel = cycleVoxel
 
 do
   local Game = require("src.core.Game")
@@ -642,7 +718,6 @@ do
   function Game:keypressed(key)
     local claim = HOTKEYS[key]
     local top = self.stack and self.stack:top()
-    -- there was code for "e" and "q" that mess with the zoom functionality here from DramaticShape v1.6.1, but I've removed it.
     -- A screen with its own key handler gets the key first, exactly as the
     -- engine's first branch does: typing a nickname must not toggle a
     -- render mode. Only free-roam presses are ours to take.
@@ -651,12 +726,32 @@ do
         -- VOXEL key walks the ANGLE rungs and steps over FULL (Voxel.HOTKEY_ORDER),
         -- so the registry's plain "advance one and wrap" is not what it
         -- wants; 6 still is. The gate is the registry's own either way.
-        -- The whole of 3's step lives in cycleVoxel, because the pad's
-        -- SELECT button makes the same step (see the handleInput wrap).
-        if key == KEY_VOXEL then
-          if cycleVoxel(self) then return end
-        elseif Pipelines.hotkey(key, top, self.overworld) then
+        local stepped = false
+        if key == "3" then
+          if Pipelines.canToggle("voxel", top, self.overworld) then
+            Pipelines.setLevel("voxel",
+              Voxel.nextHotkeyLevel(Pipelines.level("voxel")))
+            stepped = true
+          end
+        else
+          stepped = Pipelines.hotkey(key, top, self.overworld) and true
+        end
+        if stepped then
           Pipelines.syncOptions(self.save.options)
+          -- 3 is the key that used to turn TILT on and sits next to the one
+          -- that used to turn GBC FX on, and this mod has taken both away.
+          -- A player who left either running before enabling the mod would
+          -- otherwise have no way back to off, and both fight the diorama:
+          -- TILT is the flat fake of what this mode does for real, and GBC
+          -- FX is a full-screen present pass over the top of it. So the
+          -- VOXEL key clears them on EVERY press, not just the press that
+          -- switches the mode on -- cycling back round to OFF leaves them
+          -- off too, which is the state the key is now the only route to.
+          if key == "3" then
+            self.save.options.tilt = 0
+            self.save.options.gbcfx = 0
+            require("src.render.GBCFX").setLevel(0)
+          end
           require("src.render.Tilt").setLevel(self.save.options.tilt or 0)
           self:writeOptions()
           return
@@ -739,25 +834,6 @@ end
 --
 -- Everything they did is still reachable: uninstall the mod and both rows are
 -- back, at whatever they were last set to.
--- BATTLE BG rides the same reasoning, and comes off for a reason of its own.
--- The row picks what fills the screen AROUND the battle's 160x144 field --
--- WHITE paper, BLACK bars, or the frozen overworld dimmed behind it -- and
--- all three were answers to the same question: what to do with the voids,
--- given the battle is a small picture in the middle of a big window.
---
--- This mod answers that question differently and permanently. A staged fight
--- fills the whole window with the map the fight is standing on, and the
--- flat battle screen it composites over it is drawn on the mode's own
--- surface; there are no voids left for the row to fill. WORLD is the worst
--- of the three under it -- it makes the battle non-opaque so the engine
--- draws the overworld underneath, which is a SECOND copy of the world drawn
--- under the one the arena pass already put there, dimmed and at a different
--- camera. BLACK bars over a diorama read as a letterboxed screenshot.
---
--- So the value is pinned at WHITE, which is the one the mode was composed
--- against, and the row comes off the menu on the same reasoning as TILT and
--- GBC FX: a row that no longer decides anything is worse than no row.
--- Uninstall the mod and it is back, at whatever it was last set to.
 local function pinEngineFx(game)
   game = game or require("src.core.Game")
   local opts = game and game.save and game.save.options
@@ -766,9 +842,7 @@ local function pinEngineFx(game)
   local changed = false
   if opts then
     changed = (opts.tilt or 0) ~= 0 or (opts.gbcfx or 0) ~= 0
-                or (opts.battleBg or "white") ~= "white"
     opts.tilt, opts.gbcfx = 0, 0
-    opts.battleBg = "white"
   end
   pcall(Tilt.setLevel, 0)
   pcall(GBCFX.setLevel, 0)
@@ -785,11 +859,7 @@ mod.hooks:wrap("ui.options.rows", function(next, game, rows)
   -- off the menu whatever else this mod is or is not doing
   pinEngineFx(game)
   dropRow(out, "tilt")
-  dropRow(out, "gbcfx") -- Stahl's NOTE: why is this dropped? gonna test if it messes things up, otherwise there's no reason to take this option away from the player
-  -- and BATTLE BG with them: this mode fills the window with the map, so
-  -- the row's whole question -- what to put in the voids around the battle
-  -- -- no longer has voids to be about (see pinEngineFx)
-  dropRow(out, "battleBg")
+  dropRow(out, "gbcfx")
   -- BATTLE LAYOUT is the ENGINE's row, and this is the one place the mod takes
   -- one away. While a fight can be staged on the map, OG is the only layout it
   -- can be composed in (OverworldBattle.forceOG), so the value is pinned there
@@ -799,6 +869,7 @@ mod.hooks:wrap("ui.options.rows", function(next, game, rows)
   -- keypress.
   if stagedBattles() then
     OverworldBattle.forceOG(game)
+    BattleArt.forceRomPlayer(game)
     dropRow(out, "battleLayout")
   end
   local full = Voxel.isFull(Pipelines.level("voxel"))
@@ -815,13 +886,13 @@ mod.hooks:wrap("ui.options.rows", function(next, game, rows)
     --
     -- FULL: a preset that owns the look, so the rows that describe the look go
     -- with it. The BATTLE rows are not that -- 3D-BTL decides what a fight is
-    -- drawn OVER and BACK SPRITES how it is framed, and neither is a knob on
+    -- drawn over and BATTLE ART how its world cards are sourced, neither a knob on
     -- the diorama FULL is a preset for. FULL still SETS them on arrival (see
     -- applyFull); it does not hold them, so leaving them on the menu is the
     -- difference between a preset and a lock.
     --
-    -- And a row whose own switch is off the table this frame (BACK SPRITES,
-    -- which needs a staged fight to be about) is left off with it. The mod
+    -- And a row whose own switch is off the table this frame (battle-art rows
+    -- need a staged fight to be about) is left off with it. The mod
     -- manager's page carries every one of them either way.
     local offered = (entry.full or not full)
                     and (not entry.when or entry.when())
@@ -854,6 +925,7 @@ mod.events:on("mod.options_changed", function(payload)
   -- the OPTIONS row does. The manager persists its own value; this is the one
   -- that has to follow it.
   if stagedBattles() then OverworldBattle.forceOG() end
+  BattleArt.forceRomPlayer()
   -- and DAYTIME changed from the manager's page while FULL owns it snaps
   -- straight back to SYNC -- the OPTIONS row is hidden, but the manager's is
   -- not, and FULL's pin must hold against both
@@ -950,7 +1022,8 @@ end)
 -- and a player who stepped off FULL could not see the rows come back.
 --
 -- Rebuilt in place, and only on a step that changes the LIST: crossing FULL,
--- or toggling 3D-BTL, which is the other row that owns one (BATTLE LAYOUT).
+-- toggling 3D-BTL, which owns BATTLE LAYOUT, or changing BATTLE ART, which
+-- owns the TRAINER ART row and, under ANIMATED, the two generation rows.
 -- Every other rung returns the same list, and rebuilding on all of them would
 -- rerun every mod's ui.options.rows hook once per keypress. The cursor is
 -- clamped rather than reset, so it stays on the row it was just used on
@@ -969,16 +1042,18 @@ do
     function OptionsMenu:update(dt)
       local before = Pipelines.level("voxel")
       local hadBattles = OverworldBattle.enabled()
-      -- the VR row hides the two battle rows while it is on, so stepping
-      -- it changes the LIST exactly the way 3D-BTL does
       local hadVR = VR.enabled()
+      local hadBattleArt = BattleArt.setting:get()
       local wasOn = idAt(self, self.index)
+      local hadVR = VR.enabled()
       inner(self, dt)
+      BattleArt.forceRomPlayer(self.game)
       local after = Pipelines.level("voxel")
       local crossedFull = after ~= before
                           and (Voxel.isFull(before) or Voxel.isFull(after))
+      local hasBattleArt = BattleArt.setting:get()
       if crossedFull or OverworldBattle.enabled() ~= hadBattles
-         or VR.enabled() ~= hadVR then
+         or hasBattleArt ~= hadBattleArt or VR.enabled() ~= hadVR then
         local rebuilt = OptionsMenu.new(self.game)
         self.rows = rebuilt.rows
         -- Follow the row the cursor was ON rather than the slot it was in:
@@ -1004,11 +1079,9 @@ end
 -- so this file keeps naming every engine seam the mod touches.
 OverworldBattle.install()
 
--- ------- the free-roam rungs' inputs and their walk
+-- ------- the first-person rung's inputs and its walk
 --
--- 1ST and 3RD need two things no other rung does, and each is a named seam.
--- Both rungs are one rig -- the boom behind the shoulder is a number inside
--- it (lib/ThirdPerson.lua) -- so both are installed by the same two calls:
+-- 1ST needs two things no other rung does, and each is a named seam:
 --
 -- FirstPerson.install claims the LOOK inputs the engine ignores: the right
 -- stick's axes (Game:gamepadaxis passes them to Input, which returns early
@@ -1020,11 +1093,11 @@ OverworldBattle.install()
 -- open screen is the look; the d-pad and buttons still go to
 -- TouchControls, whose own d-pad finger is also read back analog as the
 -- move vector). Every wrap forwards whatever it does not claim, and claims
--- only while one of the two rungs is actually driving.
+-- only while 1ST is actually driving.
 --
 -- FreeMove.install wraps OverworldState:handleInput -- the one choke point
 -- where the grid walk reads the pad, and the same seam the engine's own
--- Cycling Road pull lives behind. While either drives, the walk is continuous
+-- Cycling Road pull lives behind. While 1ST drives, the walk is continuous
 -- and camera-relative; the player's logical cell stays synced and every
 -- per-cell consequence still runs through the engine's own machinery
 -- (onStepComplete, checkEdgeExit, checkLedgeHop, checkBoulderPush). The
@@ -1043,43 +1116,11 @@ FreeMove.install()
 -- the free-roam look is not driving.
 -- Stahl's NOTE: CamControl is for the battle mostly. with the hotkey behavior disabled it should play nicer now.
 CamControl.install()
-
--- ------- SELECT walks the angle ladder
--- no it doesn't anymore. checkmate atheists.
---
--- The same step the "3" key makes, on the pad's own button: a phone (and
--- a controller) has no number row, and SELECT has no overworld job in
--- Gen 1 -- its work is all in-menu, which this wrap never sees. The seam
--- is OverworldState:handleInput, the same choke point the free walk
--- replaced: every gate above it -- menus, dialogs, scripted moves,
--- transitions -- already decided the overworld owns the buttons, so a
--- SELECT here is free-roam by construction, exactly like the key. When
--- the step is refused (mid-warp, no 3D pass) the press falls through to
--- the engine's own handling, which is a no-op, as ever.
---
--- Installed AFTER FreeMove.install, deliberately: its wrap must sit
--- OUTSIDE the free walk's, or first person -- where FreeMove.tick takes
--- the frame and never calls further in -- would eat the button, and the
--- one rung SELECT could not step off of would be 1ST itself.
--- do
---   local OverworldState = require("src.world.OverworldController")
---   if not OverworldState.dramaticShapeSelectHook then
---     local inner = OverworldState.handleInput
---     function OverworldState:handleInput(...)
---       local Game = require("src.core.Game")
---       local input = Game.input
---       --if input and input.wasPressed and input:wasPressed("select") then
---         --if cycleVoxel(Game) then return end
---       --end
---       -- removed these for 1.6.3 
---       return inner(self, ...)
---     end
---     OverworldState.dramaticShapeSelectHook = true
---   end
--- end
-
--- just kill me already
---Horde.install()
+-- Field poison still ticks every fourth step and retains its sound, damage,
+-- faint messages and blackout.  Only the engine's full-screen dark pulse is
+-- suppressed; on a 3D scene that legacy palette flicker reads as an intrusive
+-- display flash rather than feedback on the poisoned party member.
+PoisonFlash.install()
 
 -- ------- edge-anchored menus stay in the GB frame while a headset is live
 --
@@ -1105,6 +1146,11 @@ do
     Game.dramaticShapeAnchorHold = true
   end
 end
+-- CamControl.install wires the battle-camera zoom (wheel / pinch) and the
+-- right-stick orbit: the inputs that steer the staged battle's rig. It is
+-- pcall-guarded inside OverworldBattle.update, so calling it here only
+-- matters when a battle is actually on screen.
+V.require("CamControl").install()
 
 -- The overworld's own pushBattle is the choke point for a wild encounter or
 -- a trainer, and it is wrapped. A battle that arrives some other way -- a
@@ -1132,7 +1178,9 @@ mod.hooks:wrap("pokemon.sprite", function(next, path, ctx)
   if not (ctx and ctx.kind == "battle" and ctx.side == "back") then
     return out
   end
-  if not OverworldBattle.wantsFront() then return out end
+  if BattleArt.playerSide() ~= "front" or not OverworldBattle.wantsFront() then
+    return out
+  end
   local def = ctx.data and ctx.data.pokemon and ctx.data.pokemon[ctx.species]
   return (def and def.spriteFront) or out
 end)
@@ -1182,7 +1230,16 @@ mod.events:on("save.writing", function()
   DayNight.store()
 end)
 
-mod.events:on("save.loaded", function()
+-- Render pipelines are engine-owned settings and therefore have no
+-- ModSetting schema default. Save creation fires before Game:applyOptions,
+-- so writing FULL into an absent key here makes it the true fresh-install
+-- default while leaving an explicitly saved OFF untouched.
+mod.events:on("save.loaded", function(payload)
+  local save = payload and payload.save
+  if save and Voxel.seedOptions(save.options) then
+    require("src.render.Pipelines").applyOptions(save.options)
+  end
+  BattleArt.migrateDuplicateSetting()
   DayNight.restore()
   -- a save written before this mod was installed can carry TILT or GBC FX
   -- switched on, and their rows are not there to switch them back off (see
@@ -1191,7 +1248,10 @@ mod.events:on("save.loaded", function()
   pinEngineFx()
 end)
 
-mod.events:on("save.created", function()
+mod.events:on("save.created", function(payload)
+  local save = payload and payload.save
+  if save then Voxel.seedOptions(save.options) end
+  BattleArt.migrateDuplicateSetting()
   DayNight.restore()
   pinEngineFx()
 end)
@@ -1207,7 +1267,8 @@ mod.hooks:wrap("world.tod", function(next, tod, ctx)
   return DayNight.tod()
 end)
 
-mod.exports.version = "1.6.4"
+mod.exports.version = "1.8.0"
+mod.exports.battlePresentation = BattlePresentation.export()
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V

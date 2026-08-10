@@ -158,9 +158,10 @@ function DayTint.install()
       return draw(tex, ...)
     end
 
-    local ok, err = pcall(inner, self, zones, worldZones)
+    local ok, result = pcall(inner, self, zones, worldZones)
     gfx.draw = draw
-    if not ok then error(err, 0) end
+    if not ok then error(result, 0) end
+    return result
   end
 
   Renderer.dramaticShapeTintHook = true

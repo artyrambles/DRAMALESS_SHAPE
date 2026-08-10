@@ -264,27 +264,6 @@ local function measure(sp, t)
     top[x] = r
   end
 
-  -- The row a column's roof SURFACE may sink to. `top[x]` is the
-  -- silhouette cap -- the black the drawing closes its shape with -- and
-  -- the depth map spends most of a tapered column's depth above it, so
-  -- clamping onto `top[x]` paints that one outline pixel the length of
-  -- the slope and the courses beat against it. The surface belongs on the
-  -- first PAINTED row instead: the same refusal to let the outline stand
-  -- as a face that the side faces already make below.
-  local surfaceTop = {}
-  for x = 0, W - 1 do
-    local y = top[x]
-    while y < roofRows and sp.inside[y * W + x]
-        and sp.col[y * W + x] == BLACK do
-      y = y + 1
-    end
-    if y < roofRows and sp.inside[y * W + x] then
-      surfaceTop[x] = y
-    else
-      surfaceTop[x] = top[x]
-    end
-  end
-
   -- The drawing's own ground line: the row after the last drawn one. A
   -- building ends on the black threshold row it stands on (ground == H),
   -- but furniture is drawn standing on open floor -- the lab table's
@@ -407,7 +386,7 @@ local function measure(sp, t)
   -- building. `depthPx` names it in voxels, for an object whose real
   -- depth is not a whole tile row -- the Bike Shop toolbox is a box
   -- standing in the middle of its own cell, not a thing that fills a plot.
-  return { top = top, surfaceTop = surfaceTop, ytop = ytop,
+  return { top = top, ytop = ytop,
            D = t.depthPx or ((t.depth or #t.tiles) * 8),
            ground = ground,
            recess = recess, interior = interior, shadeTexel = shadeTexel }
@@ -903,7 +882,6 @@ local function model(sp, pr, t)
   local W, H, D = sp.W, sp.H, pr.D
   local slab, roofRows = t.slab, t.roofRows
   local top, ytop, ground = pr.top, pr.ytop, pr.ground
-  local surfaceTop = pr.surfaceTop
 
   -- The roof's drawn span. A sprite inset from its box (B03) leaves outer
   -- columns undrawn in the roof band; they carry no roof at all, and the
@@ -953,12 +931,11 @@ local function model(sp, pr, t)
     if top[x] < roofRows
         and y > tx - slab and y <= tx and z >= rz0 and z <= rz1 then
       if y == tx and x > x0d and x < x1d and z > rz0 and z < rz1 then
-        -- the surface itself. Lifting the row into the column's first
-        -- PAINTED row keeps the flank battens running down the slope
-        -- instead of falling off the silhouette -- and off its cap, which
-        -- is outline black and belongs to the rim, not to the surface.
+        -- the surface itself. Clamping the row into the column's first
+        -- drawn row keeps the flank battens running down the slope
+        -- instead of falling off the silhouette.
         local sy = roofSy[z]
-        if sy < surfaceTop[x] then sy = surfaceTop[x] end
+        if sy < top[x] then sy = top[x] end
         return sy * W + x
       end
       -- The rim reproduces the eave the drawing itself paints under the

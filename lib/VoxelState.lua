@@ -33,22 +33,35 @@ local Voxel = {}
 -- in the table is deliberate: the ladder is a list of what each rung LOOKS
 -- like, and two rungs may look the same while meaning different things.
 --
--- 1ST and 3RD are the other rungs that are more than an angle: the camera
--- steps off its orbit entirely and stands with the player -- in their eyes
--- (lib/FirstPerson.lua), or on a boom behind their shoulder
--- (lib/ThirdPerson.lua) -- with free look and free movement on both. Their
--- ANGLE entries are 75 -- the orbit rung they hand over from -- because the
--- tween in and out starts from whatever the orbit shows, and the lowest rung
--- is the one a dive into a head should start from. Everything angle-derived
--- (the sky's fade, the billboard lean the blend eases away) reads that 75
--- while the free-roam rig owns the actual camera.
+-- 1ST is the other rung that is more than an angle: the camera steps off its
+-- orbit entirely and stands in the player's own eyes (lib/FirstPerson.lua),
+-- with free look and free movement. Its ANGLE entry is 75 -- the orbit rung
+-- it hands over from -- because the tween in and out of first person starts
+-- from whatever the orbit shows, and the lowest rung is the one a dive into
+-- a head should start from. Everything angle-derived (the sky's fade, the
+-- billboard lean the blend eases away) reads that 75 while the first-person
+-- rig owns the actual camera.
 Voxel.ANGLES_DEG = { 0, 35, 15, 35, 50, 75, 75, 75 }
 Voxel.ANGLE_LABELS = { "OFF", "FULL", "15", "35", "50", "75",
-                       "1ST (EXPERIMENTAL)", "3RD (EXPERIMENTAL)" }
+                       "1ST", "3RD (EXPERIMENTAL)" }
 Voxel.MAX_LEVEL = #Voxel.ANGLES_DEG - 1
 
 -- the rung FULL sits on, so nothing has to hunt for it by label
 Voxel.FULL_LEVEL = 1
+
+-- Pipeline levels live in the engine's shared options bucket rather than in
+-- ModSetting, so they have no schema-level default. Seed only a genuinely
+-- absent voxel key: an explicit OFF is a player's choice and must survive an
+-- update/reinstall. T-SHIFT is deliberately not seeded here: it was not part
+-- of the requested default set and remains independently OFF on a fresh
+-- install (cycling onto FULL later still invokes the established preset).
+function Voxel.seedOptions(opts)
+  if type(opts) ~= "table" then return false end
+  opts.pipelines = type(opts.pipelines) == "table" and opts.pipelines or {}
+  if opts.pipelines.voxel ~= nil then return false end
+  opts.pipelines.voxel = Voxel.FULL_LEVEL
+  return true
+end
 
 function Voxel.isFull(level)
   return (level or Voxel.level) == Voxel.FULL_LEVEL
@@ -78,6 +91,8 @@ function Voxel.isFreeCam(level)
   return Voxel.isFirstPerson(level) or Voxel.isThirdPerson(level)
 end
 
+
+
 -- ------- what the hotkey walks
 --
 -- The ANGLE rungs only, with FULL left out. The key is a display-mode
@@ -87,11 +102,11 @@ end
 -- with no indication that a keypress had done so. FULL stays on the OPTIONS
 -- row, which is where a preset that changes other rows belongs.
 --
--- 1ST and 3RD are on the path: they change the camera and only the camera,
--- which is exactly what the key promises -- and the key is also the way back
--- OUT of them on a keyboard, where the mouse is captured and the OPTIONS
+-- 1ST is on the path: it changes the camera and only the camera, which is
+-- exactly what the key promises -- and the key is also the way back OUT of
+-- first person on a keyboard, where the mouse is captured and the OPTIONS
 -- menu is a trip.
-Voxel.HOTKEY_ORDER = { 0, 2, 3, 4, 5, 6, 7 }  -- OFF,15,35,50,75,1ST,3RD
+Voxel.HOTKEY_ORDER = { 0, 2, 3, 4, 5, 6, 7 }   -- OFF, 15, 35, 50, 75, 1ST, 3RD
 
 -- The rung a press moves to from `level`.
 --
