@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.5 PRE-RELEASE
+- Full merge with BATTLE ART fork is in progress.
+- Expect borked options menu and visual glitches, we're working on it! There were dozens of files and literally thousands of lines of code to manually go through and review since our two forks are several versions apart when it comes to their base and what we did with them before merging them back together. It's bound to be a little messy.
+- This version is only for testing, not for public release. If you got hold of this version and are using it, you are doing so at your own discretion and support cannot be provided. It's not done yet.
+
 ## 1.6.4 HOTFIX for 1.6.3
 - Fixed camera control issues (hopefully), also hotkeys Q and E are no longer claimed by this mod. 
 - Also increased max and min zoom distance in battle.

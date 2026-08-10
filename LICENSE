@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Stahltier
+Copyright (c) 2026 Stahltier and others (see README.md for a full list of contributors)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,6 +25,7 @@ The OpenXR loader is shipped unmodified in assets/vr (Apache-2.0; full license t
 This repo contains code from DramaticShape's [Dramatic Shape Voxel Mod](https://github.com/DramaticShape/DramaticShapeVoxelMod), specifically v1.6.1.
 It also contains code from absol89's fork [BATTLE ART](https://github.com/absol89/DramaticShapeVoxelMod).
 It also contains code from the [TERRARIUM](https://github.com/BrenoBertucci/Terrarium) fork created by BrenoBertucci.
-It also contains compatibility code from the [StadiumFX](https://github.com/anxiousintrovert/StadiumBattleFX) mod by anxiousintrovert.
+It also contains compatibility code from the [StadiumBattleFX](https://github.com/anxiousintrovert/StadiumBattleFX) mod by anxiousintrovert.
+The DS fork BATTLE ART by absol_89 has been merged with this one from version 1.6.5 onwards.
 
 It also contains my own code which is provided under the [CC-BY-NC License](https://creativecommons.org/licenses/by-nc/4.0/).

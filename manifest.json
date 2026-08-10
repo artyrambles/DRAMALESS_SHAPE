@@ -2,7 +2,7 @@
   "id": "DRAMALESS_SHAPE"
 ,
   "name": "Dramaless Shape Voxel Mod",
-  "version": "1.6.4",
+  "version": "1.6.5.PRE",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -13,7 +13,9 @@
   "optional_dependencies": [],
   "conflicts": [
     "DRAMATIC_SHAPE",
-    "TERRARIUM"
+    "TERRARIUM",
+    "BATTLE_ART_VOXEL_FORK",
+    "potato_voxel"
   ],
   "permissions": [
     "engine_internals",
