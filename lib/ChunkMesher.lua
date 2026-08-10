@@ -64,6 +64,26 @@ end
 
 local ChunkMesher = {}
 
+-- Which drawn row a FLAT-topped volume's top face wears at depth `ty`.
+--
+-- A structure is usually deeper than the art that draws it, so the rows
+-- cycle and the drawing repeats down the top. That is right for art which
+-- genuinely repeats -- the Safari Zone's fence alternates two tiles the
+-- whole way down -- and wrong for a RIM over a uniform body: a cliff
+-- mound's first row is its top edge, and cycling lays that edge again
+-- every second tile, striping a plateau with rims it should not have.
+--
+-- Where Structures found the body uniform, the rim is laid once at the
+-- north edge and the body held after it. Everything else cycles as before.
+function ChunkMesher.flatTopRow(run, ty)
+  local m = math.min(2, run.extent)
+  local d = ty - run.north
+  if run.topUniform then
+    return run.north + math.min(d, m - 1)
+  end
+  return run.north + (d % m)
+end
+
 -- Ring of border blocks meshed around the body, matching the width
 -- TileRenderer draws so the two modes end at the same place.
 local RING = 3
@@ -528,8 +548,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
                  { x0 + 8, neY, z0 }, { x0, nwY, z0 } },
                { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } }, 0.95)
         elseif run then
-          local m = math.min(2, run.extent)
-          local topTile = map:tileAt(tx, run.north + ((ty - run.north) % m))
+          local topTile = map:tileAt(tx, ChunkMesher.flatTopRow(run, ty))
           topQuad(x0, z0, h, topTile, VOLUME_TOP_SHADE)
         else
           local topTile = tile

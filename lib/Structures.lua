@@ -2225,6 +2225,43 @@ function Structures.buildVolume(S, map, tiles)
   -- whether the region's dominant columns are flat repeats (a cliff
   -- mound's plateau) rather than drawn facades (a house's front)
   local modeRepeat = (repeatVotes[modeH] or 0) * 2 > modeN
+
+  -- Whether this REGION's tops are a rim over a uniform body -- what every
+  -- cliff mound is drawn as: a top edge, then the same rock the whole way
+  -- down. The top face may then lay that rim once along its north edge and
+  -- hold the body after it, instead of cycling the rim back every second
+  -- tile and striping a plateau with edges it should not have.
+  --
+  -- Answered per column AND per region, because each catches what the
+  -- other misses. A mound is one structure many columns wide, and the
+  -- columns carrying its cave mouth read differently from their neighbours
+  -- (their drawing ends in the mouth's own tiles): per column alone, those
+  -- kept cycling while the rest held, leaving rim stubs above the doorway.
+  -- But a region vote alone silences a genuine rim-over-body column that
+  -- happens to stand in a region of repeating art -- three of them in the
+  -- Safari Zone. A column holds if EITHER says so.
+  --
+  -- Art that genuinely repeats is not uniform and keeps cycling: the
+  -- Safari Zone's fence alternates two tiles the whole way down, and there
+  -- the repeat IS what the drawing says.
+  local uniformVotes, uniformTotal = 0, 0
+  for _, r in ipairs(runs) do
+    local run = r.run
+    if run.extent > 2 then
+      uniformTotal = uniformTotal + 1
+      local body = map:tileAt(r.tx, run.north + 1)
+      local uniform = true
+      for d = 2, run.extent - 1 do
+        if map:tileAt(r.tx, run.north + d) ~= body then
+          uniform = false
+          break
+        end
+      end
+      run.ownUniform = uniform
+      if uniform then uniformVotes = uniformVotes + 1 end
+    end
+  end
+  local regionUniform = uniformTotal > 0 and uniformVotes * 2 > uniformTotal
   for _, r in ipairs(runs) do
     local run = r.run
     local h = run.unit * 8
@@ -2272,6 +2309,7 @@ function Structures.buildVolume(S, map, tiles)
     run.rise = roofRows * 8
     run.peak = h
     run.h = h - run.rise               -- facade height: what sides build to
+    run.topUniform = run.ownUniform or regionUniform
     for ty = run.north, run.front do
       S.runs[keyOf(r.tx, ty)] = run
     end
