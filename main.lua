@@ -99,6 +99,12 @@ mod.content.render_pipelines:register("voxel", {
     ChunkMesher.pump(Game and Game.stack and Game.stack:top() ~= ow)
   end,
   drawWorld = function(ctx)
+    -- Terrain and characters are geometry; the field FX stay ordinary 2D
+    -- draws composited on top, anchored through the same camera the 3D
+    -- pass used (ctx.drawFx below).  The scene renders at the window's
+    -- PIXEL resolution (see sceneSize) so the 3D pass is crisp rather than
+    -- a magnified low-res image, while the FX closures keep drawing in
+    -- world-pixel units.
     local sw, sh = sceneSize(ctx)
     local rw, rh = AntiAlias.expand(sw, sh)
     local canvas = VoxelScene.render(ctx.state, rw, rh, ctx.vw, ctx.vh, ctx.paletteFor)
@@ -343,7 +349,9 @@ do
     Map.setBlock = function(self, bx, by, block)
       local before = self:blockAt(bx, by)
       setBlock(self, bx, by, block)
-      if self.id and self:blockAt(bx, by) ~= before then ChunkMesher.refresh(self.id) end
+      if self.id and self:blockAt(bx, by) ~= before then
+        ChunkMesher.refresh(self.id)
+      end
     end
     Map.dramalessShapeBlockHook = true
   end
