@@ -596,28 +596,28 @@ function BattleScene.render(state, arena, textures, token)
     if not Voxel3D.beginScene(rw, rh, cx, cy, vw, vh, skyFill, "battle") then
       return
     end
-    if not whiteFill then
-    Voxel3D.draw(terrain, atlasFor(host), nil)
-    for i, nb in ipairs(neighbors) do
-      Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy))
-    end
-    -- and the water over it -- PLAIN, always: the flat animated tiles, never
-    -- the reflective pass, whatever the WATER row says. The reflection is
-    -- tuned for the overworld's ladder of cameras; this shot's is PLACED --
-    -- low, tilted and framed like a picture -- and under it the pass reads
-    -- wrong: Fresnel opens all the way up, the leaned sky lands on bands the
-    -- framing never shows, and a lake-sized arena comes out as murk wearing
-    -- the tile art. The battle is a stage set, and stage water is painted.
-    -- (No mirror also means the mons need no second draw into one -- they
-    -- just composite over the water below, like everything else on the set.)
-    if water then Voxel3D.draw(water, atlasFor(host)) end
-    for i, nb in ipairs(neighbors) do
-      if nbWater and nbWater[i] then
-        Voxel3D.draw(nbWater[i], atlasFor(nb.map),
-                     Mat4.translate(nb.ox, 0, nb.oy))
+    if not whiteFill and not discs then
+      Voxel3D.draw(terrain, atlasFor(host), nil)
+      for i, nb in ipairs(neighbors) do
+        Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
+                    Mat4.translate(nb.ox, 0, nb.oy))
       end
-    end
+      -- and the water over it -- PLAIN, always: the flat animated tiles, never
+      -- the reflective pass, whatever the WATER row says. The reflection is
+      -- tuned for the overworld's ladder of cameras; this shot's is PLACED --
+      -- low, tilted and framed like a picture -- and under it the pass reads
+      -- wrong: Fresnel opens all the way up, the leaned sky lands on bands the
+      -- framing never shows, and a lake-sized arena comes out as murk wearing
+      -- the tile art. The battle is a stage set, and stage water is painted.
+      -- (No mirror also means the mons need no second draw into one -- they
+      -- just composite over the water below, like everything else on the set.)
+      if water then Voxel3D.draw(water, atlasFor(host)) end
+      for i, nb in ipairs(neighbors) do
+        if nbWater and nbWater[i] then
+          Voxel3D.draw(nbWater[i], atlasFor(nb.map),
+                      Mat4.translate(nb.ox, 0, nb.oy))
+        end
+      end
     end
     -- The mons, standing on their tiles. Depth-tested like everything else,
     -- so a ledge or a tree between the camera and a Pokemon really is in
@@ -675,6 +675,16 @@ function BattleScene.render(state, arena, textures, token)
     end
     Voxel3D.glass(true)
     Voxel3D.seams(true)
+    -- and the STADIUM models, inside the same flash window and with the
+    -- same camera-ward pull, so a Pokemon standing on its tile still wins
+    -- the depth test against the tile. They manage the wireframe and the
+    -- glass mask around their own draws (StadiumRig), which is why this
+    -- sits outside the pair above rather than inside it.
+    local okStadium, stadiumErr = pcall(function()
+      V.require("Stadium").draw(BattleBillboard.PULL)
+    end)
+    if not okStadium then V.require("Stadium").report(stadiumErr) end
+    
     if flashing then Voxel3D.flatten(nil) end
     -- grass and flowers ride the same camera-ward pull the free-roam pass
     -- gives them, measured against THIS camera's pitch rather than the
@@ -695,6 +705,12 @@ function BattleScene.render(state, arena, textures, token)
                     Mat4.translate(nb.ox, 0, nb.oy), fpull,
                     ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
       end
+    elseif discs then
+      -- discs: the two platforms, and nothing else. No terrain, no
+      -- neighbouring maps, no water, no grass and no flowers -- see the
+      -- matching skips further down. What is behind them is the sky the
+      -- clear painted.
+      V.require("StadiumStage").draw(arena, groundY)
     end
     local canvas = AntiAlias.resolve(Voxel3D.endScene(), pw, ph, "battle")
     if not canvas then return end
