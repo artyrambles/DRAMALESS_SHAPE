@@ -112,6 +112,7 @@ local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
 local CamControl = V.require("CamControl")
 local Quality = V.require("Quality")
+local PoisonFlash = V.require("PoisonFlash")
 local VR = V.require("VR")
 
 -- Forward declaration: the voxel pipeline's update hook (registered below)
