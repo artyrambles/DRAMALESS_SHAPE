@@ -55,6 +55,7 @@ local Voxel = V.require("VoxelState")
 local Voxel3D = V.require("Voxel3D")
 local WorldCurve = V.require("WorldCurve")
 local ThirdPerson = V.require("ThirdPerson")
+local ModSetting = V.require("ModSetting")
 
 local FirstPerson = {}
 
@@ -100,6 +101,13 @@ FirstPerson.STICK_PITCH = 2.4
 FirstPerson.STICK_DEAD = 0.18
 FirstPerson.TOUCH_TURN = 2.2 * math.pi
 FirstPerson.MOVE_DEAD = 0.25
+
+-- Whether the right stick's pitch is inverted (pull back to look up). A
+-- plain on/off ladder, so ModSetting:schema renders it as a toggle rather
+-- than a multi-choice ladder. Off by default -- pushing the stick forward
+-- looks up, matching the mouse's own "push where you want to look" feel.
+FirstPerson.invertLookY = ModSetting.new(
+  "INVERT_LOOK_Y", "INVERT Y", { false, true }, { "Off", "On" })
 
 -- ------- state
 --
@@ -546,9 +554,13 @@ function FirstPerson.update(dt)
     end
     local cy, cp = curve(rx), curve(ry)
     if cy ~= 0 or cp ~= 0 then
-      -- negated yaw for the same reason as the mouse above
+      -- negated yaw for the same reason as the mouse above; pitch sign
+      -- comes from the toggle -- Off passes ry through untouched (push
+      -- forward, look up, same feel as the mouse), On flips it (pull
+      -- back, look up)
+      local pitchSign = FirstPerson.invertLookY:get() and -1 or 1
       FirstPerson.lookBy(-cy * FirstPerson.STICK_YAW * dt,
-                         cp * FirstPerson.STICK_PITCH * dt)
+                         pitchSign * cp * FirstPerson.STICK_PITCH * dt)
     end
   end
 end
