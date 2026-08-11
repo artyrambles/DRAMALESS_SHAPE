@@ -17,4 +17,24 @@
 - Go to the OPTIONS menu, make sure the game isn't in fullscreen or borderless fullscreen as this might hide
   the filepicker window and cause the game to appear softlocked.
 - Find the option that says Stadium Import and select it.
-- (wip, please stay tuned)
+- After extraction screen is complete, go to Options and change `3D-BTL` to `Stadium A` or `Stadium B`
+
+## Installation on Android
+- Create a new folder named `baseroms` in `/storage/emulated/0/android/data/com.theboisclub.pokemonred/files/save/pokemon-love2d/`
+- Move Stadium.z64 rom to your newly created `baseroms` folder, rename rom to exactly `baserom.z64`
+- Open Gen1Recomp, launch Red, Blue, or Yellow.
+- **Load your save / finish the Oak intro on a new save to trigger the model extraction**
+- After extraction screen is complete, go to Options and change `3D-BTL` to `Stadium A` or `Stadium B`
+
+## Installation on iOS
+- Extract the `DRAMALESS_SHAPE-1.x.x.zip` so you have a working folder named `DRAMALESS_SHAPE-1.x.x`.
+- Rename your Stadium 1.z64 rom to `baserom.z64` and move into existing folder `DRAMALESS_SHAPE-1.x.x/model_extract/baseroms/`.
+- Open `DRAMALESS_SHAPE-1.x.x/lib/StadiumInstall.lua` in a text editor.
+- In `StadiumInstall.lua`:
+  - Go to Line 51 (or search for) and change `StadiumInstall.ROM_DIR = "baseroms"` to `StadiumInstall.ROM_DIR = "mods/DRAMALESS_SHAPE/model_extract/baseroms"`
+  - Save `StadiumInstall.lua`.
+- Compress/zip your `DRAMALESS_SHAPE-1.x.x` folder into a new .zip named `Modified-DRAMALESS_SHAPE-1.x.x.zip`
+- Open Gen1Recomp and import your modified `DRAMALESS_SHAPE-1.x.x.zip` as normal.
+- Launch Red, Blue, or Yellow.
+- **Load your save / finish the Oak intro on a new save to trigger the model extraction**
+- After extraction screen is complete, go to Options and change `3D-BTL` to `Stadium A` or `Stadium B`
