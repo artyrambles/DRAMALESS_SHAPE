@@ -1,215 +1,115 @@
-# Dramaless Shape
+# Dramaless Shape 2.0
 
-Draws the overworld as a 3D diorama. Fork with edits by Stahltier among others (see Credits section).
+Dramaless Shape renders the Gen1Recomp overworld as a depth-buffered voxel
+diorama. Version 2.0 owns voxel environments plus one narrow legacy mode:
+native Gen 1 2D battle cards staged on the voxel map.
 
-> ### This is a fork, not the original or main version of the Dramatic Shape Voxel mod!
->
-> **Dramaless Shape is a fork of the [Dramatic Shape Voxel Mod](https://github.com/DramaticShape/DramaticShapeVoxelMod)
-> by [Dramatic Shape](https://github.com/DramaticShape).**
-> I've made many edits and merged in code and assets from the [TERRARIUM](https://github.com/BrenoBertucci/Terrarium)
-> fork created by BrenoBertucci.
-> There is native compatibility with [StadiumFX](https://github.com/anxiousintrovert/StadiumBattleFX) by anxiousintrovert.
->
-> **The original and main version of the mod was here, but is currently defunct:**
-> https://github.com/DramaticShape/DramaticShapeVoxelMod
->
-> It ships under its own mod id `DRAMALESS_SHAPE` and its own folder, so it can
-> sit **beside** the original without overwriting it.
+This is an experimental split release based on the Dramaless development line.
+Keep Dramaless 1.6.4 LTS archived if you want the former combined feature set.
 
-A mod for the [Pokémon Gen 1 Recompilation
-Project](https://github.com/bryanthaboi/gen1recomp).
+## Ownership boundary
 
-> **This is a fan-made modification. It is not a game, and it contains no part
-> of any Nintendo product.** Please read [Legal](#legal) before anything else.
+Dramaless owns voxel terrain, buildings, overworld figures, lighting, water,
+shadows, camera modes, tilt shift, performance settings, voxel-map arena
+rendering, and its native-2D card renderer. It does not own Stadium Pokemon
+models, replacement sprite packs, move animations, HUDs, disc stages, battle
+transitions, or VR.
 
----
+[StadiumBattleFX](https://github.com/anxiousintrovert/StadiumBattleFX) 2.x is
+the modular battle-presentation host. When both mods are installed, Dramaless
+registers `DRAMALESS_SHAPE:voxel-map` in the arena selector and
+`DRAMALESS_SHAPE:voxel-cards` in the model selector. The selectors are
+independent, so players can pair voxel cards with a Stadium arena or pair
+Stadium models with the voxel map.
 
-## Legal
+Without StadiumBattleFX, Dramaless uses its own small standalone host for the
+`VOXEL ARENA + 2D CARDS` option. The arena remains a fully depth-buffered 3D
+voxel environment; only the Pokemon and trainer cards are 2D. It automatically
+yields when StadiumBattleFX is installed, avoiding two battle compositors or
+two sets of selectors.
 
-**Pokémon Red, Pokémon Blue and Pokémon Yellow are © 1996-1999 Nintendo,
-Creatures Inc. and GAME FREAK Inc. "Pokémon", "Nintendo" and "Game Boy" are
-trademarks of their respective owners. All rights in the games, characters,
-names, artwork, music and every other element of them belong to those
-companies and to nobody else.**
+Mixed legacy/2.0 installs are blocked by manifest ranges. Use legacy with
+legacy, or 2.x with 2.x.
 
-This project is:
+## Installation
 
-- **Unofficial and unaffiliated.** It is not made by, endorsed by, sponsored
-  by, licensed by, or associated with Nintendo, Creatures Inc., GAME FREAK
-  Inc., The PokÃ©mon Company, or any of their subsidiaries or partners.
-- **Not a game, and not a way to get one.** It is a modification: a set of
-  Lua scripts and original art that changes how an already-installed program
-  draws itself. On its own it does nothing at all.
-- **Free of Nintendo's data.** This repository contains **no ROM, no ROM
-  patch, no game code, no sprite, no map, no music and no sound** taken from
-  any PokÃ©mon title. It never has and it never will. The `.gitignore` here
-  blocks ROMs, dumps, saves and patch files (`.bps`, `.ips`, `.ups`) so that
-  one cannot be committed by accident.
-- **Dependent on a copy you already own.** Gen1Recomp reads a ROM that the
-  player dumps from their own cartridge. **Do not ask this project for a ROM,
-  and do not link one in an issue or a pull request** â€” such a request will be
-  closed and such a link removed.
-- **Non-commercial.** It is given away. No part of it is sold, and no
-  donations, ads or paid tiers are attached to it. It is a hobby project made
-  out of affection for a thirty-year-old game.
+Install the release ZIP through Gen1Recomp's mod manager or extract it as
+`mods/DRAMALESS_SHAPE`. This experimental build targets mod API 2 and declares
+its required engine range in `manifest.json`.
 
-The original art assets shipped here (ground textures, voxel models) were
-drawn or generated for this mod.
+## Main controls
 
-**If a rights holder objects to anything in this repository, open an issue or
-contact me and it will be taken down promptly.** No argument, no delay.
+- `V`: cycle voxel camera modes (FULL remains an options-menu preset).
+- `G`: toggle voxel grid lines.
+- `T`: cycle tilt shift.
+- `C`: cycle world curvature.
+- `9`: cycle water rendering.
 
----
+First- and third-person modes retain camera-relative movement and input. The
+quality, shadow, antialiasing, water, day/night, grid, and curvature settings
+remain available. `VOXEL ARENA + 2D CARDS` is shown when StadiumBattleFX is
+absent. `BACK SPRITES` is available whenever Dramaless's native-card provider
+is selected; it keeps the player's original back picture in the menu slot
+while the enemy remains staged in the arena. The old multi-mode `3D-BTL`
+selector and all VR settings are gone.
 
-## Made with AI assistance (Terrarium Code ONLY)
+## StadiumBattleFX integration
 
-**Large parts of the Terrarium fork were written with the help of AI coding
-assistants** (Anthropic's Claude, among others). This is stated plainly and up
-front, not buried, because you have a right to know what you are installing
-and reviewing.
+The optional providers use only StadiumBattleFX Battle Presentation API 1. The
+arena provider
+searches the current map's authored location first, then a generic safe
+location on the same map. If neither is suitable, it returns the API fallback
+sentinel and StadiumBattleFX uses its own arena.
 
-What that means in practice:
+Dramaless owns the voxel canvas, depth buffer, and terrain shader. It consumes
+the host-resolved camera pose and
+invokes the host's actor callback exactly once inside that depth pass; it never
+calls or imports a model provider.
 
-- The code was **directed, tested and accepted by a human** â€” me. Features
-  were specified, measured, and rejected when the measurement did not support
-  them. It is not generated and dumped.
-- Much of it is **verified by probes rather than by eye.** The `tests/`
-  directory holds twenty self-contained probes that drive the real game
-  headless and write numbers to a log â€” shadow lengths, palette ramps, pixel
-  classifications, frame-time medians. Where this README claims a number, a
-  probe produced it.
-- It carries the usual caveat all the same: **read it before you trust it.**
-  AI-assisted code can be confidently wrong, and some of this is in the render
-  path of a program you are running on your own machine.
+The card provider preserves Dramaless's original one-to-one native-picture
+capture, front-art mirroring, world scale, and depth-tested voxel billboards,
+including trainer/send-out and ordinary battle-picture state. On a non-voxel
+arena it uses the host projection seam instead. StadiumBattleFX supplies the
+lifecycle, camera, arena selection, and a scoped native-picture capture
+service. The card provider does not replace the HUD, transitions, or
+move-animation player.
 
-## NOT made with AI or AI assistance
+## Diagnostics
 
-***Any additions and edits that the Dramaless Shape fork make were NOT created or**
-**in any way touched by AI.***
-**My code is all 100% organic home-grown human-made spaghetti baby**
+The mod records bounded, structured event logs at
+`dramaless_shape/dramaless_shape.log` in the LOVE save directory. Use
+`EXPORT DIAGNOSTIC LOG` in Options to save a copy. Windows and macOS use a
+save dialog. Linux uses Zenity or KDialog when available; SteamOS Game Mode
+falls back to Downloads and then the LOVE save directory.
 
----
+Logs contain lifecycle, option, mesh/cache, integration, and error events.
+They do not contain ROM bytes, save contents, tokens, or full source paths.
 
-## What the fork(s) is/are based on
+## Development
 
-The base is Dramatic Shape's **1.6.1**: the voxel diorama, the depth-buffered
-occlusion, the leaning sprite slabs, the shadow map, VR, AA, the tilt-shift 
-pass, the Stadium ROM compatibility, and the over-the-shoulder battles.
+The stable cross-mod contract is StadiumBattleFX's
+`docs/BATTLE_PRESENTATION_API.md`. Dramaless exports its provider as
+`mod.exports.voxelArenaProvider` and `mod.exports.voxelCardProvider` for
+diagnostics, but other mods should
+register directly with StadiumBattleFX rather than depending on Dramaless
+internals.
 
-Terrarium uses Dramatic Shape 1.3.0 as its base. 
-DRAMALESS_SHAPE is based on v1.6.1. 
-Originally this mod was a fork of the 1.6.2 version of Dramatic Shape,
-but since the creator of that mod removed the MIT License from the 1.6.2
-version and onward specifically, all changes made between 1.6.1 and 1.6.2
-were manually removed by me from v1.6.3 of DRAMALESS_SHAPE and onward.
-See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
+The Battle Cinematics 0.7.96 transition adapter is Stadium-owned and does not
+require Battle Cinematics to detect Dramaless. This arena simply consumes the
+host-resolved pose like any other camera selection.
 
-### Changes made by Stahltier (Dramaless Shape Code)
-- I set out to add my personal edits to this mod in the beginning.
-- That means I wanted to make changes to fit my aesthetic (for example hiding the VoxelGrid in battle too if it was turned off in the settings),
-  and that would improve performance especially on mobile devices or otherwise low-end hardware.
-- I didn't mean to make this a fully-fledged independent mod in the beginning but then a lot of stuff happened in the span of approximately three hours
-  so here we are!
-- See CHANGELOG for a full list!
+Build an installable archive with:
 
-### It runs on weak hardware (Terrarium Code)
+```powershell
+./tools/package_mod.ps1
+```
 
-The Quality options were made for the TERRARIUM fork, and I've included it
-with my version.
+## License and attribution
 
-Two new rows on the OPTIONS menu, both visible under every preset:
+Code is distributed under the MIT License beginning with 2.0. See
+`LICENSE`. This fork contains fixes and additions by Stahltier (artyrambles)
+based on DramaticShapeVoxelMod 1.6.2, and incorporates MIT-licensed work from
+Terrarium. The removed OpenXR loader is not distributed in 2.0.
 
-| row | values | default | what it does |
-| --- | --- | --- | --- |
-| **RES** | 1/2 | 1/3 | 1/4 | FULL | **1/2** | divides the resolution the 3D pass rasterises at before it is scaled back up. Every cost in the pass is quadratic in it: 1/2 is four times less of everything, 1/3 is nine. Upscaled *nearest*, so the result is chunkier, not blurrier â€” the right defect for this art. |
-| **SHADOWS** | LOW | OFF | HIGH | SOFT | **LOW** | LOW keeps real cast shadows on a 512â€“1024 texel map instead of 2048, one tap instead of four, no neighbouring maps casting, redrawn every second frame while walking. |
-
-Plus spatial culling, and a shadow-map size ladder chosen per frame from how
-much world is actually in view.
-
-### More optimization options and performance improvements are planned!
-
-**Please be patient. It's high on my priority list.**
-
----
-
-## Requirements
-
-- **[Gen1Recomp](https://github.com/bryanthaboi/gen1recomp) v0.1.70 or newer**
-  (developed against v0.1.69)
-- A Pokemon Gen1 ROM you dumped yourself. **This project does not supply one.**
-- If Stadium Models should be used, you also need an US Stadium 1.0 ROM. Which is
-  obviously also not included here, but I tried to make the install process
-  easier and smoother.
-
-### Stadium companion API
-
-Companion effect mods can request a defender reaction on the currently drawn
-model with `Stadium.hit(side, effectiveness)`. `side` is `"player"` or
-`"enemy"`; effectiveness is `"resisted"`, `"neutral"`, or `"super"`. The
-function returns false when no live model can accept the request and never
-exposes the private Stadium session.
-
-## Installing
-
-Drop the unzipped folder into your Gen1Recomp `mods/` directory, or import the 
-packaged zip through the launcher's mods tab.
-
-**Name the installed folder `DRAMALESS_SHAPE`.** That matches the mod id in
-`manifest.json`.
-
-This fork is **independent** of upstream `DRAMATIC_SHAPE`: different id,
-different folder, different cache.
-`TERRARIUM` is also NOT required.
-
-In fact, I listed both DRAMATIC_SHAPE and TERRARIUM as hard incompatibilities.
-Please disable both if you install DRAMALESS_SHAPE, to prevent any possible bugs.
-
-Every feature is a row on the OPTIONS menu with an OFF. If something is too
-slow, too bright or too much, turn that row off; nothing here is load-bearing
-for anything else.
-
-## Repository layout
-
-| path | what it is |
-| --- | --- |
-| [`CHANGELOG.md`](CHANGELOG.md) | thirty-one releases, with the reasoning for each |
-| [`STADIUM_ROM_GUIDE.md`](STADIUM_ROM_GUIDE.md) | info for installing Stadium models on mobile devices |
-| `lib/` | the mod itself |
-| `assets/` | contains a dll for VR mode |
-
----
-
-## License - please read before forking
-
-**The original mod no longer allows independent forks since version 1.6.2**
-**as the creator removed the MIT License in that version.** 
-Please see the LICENSE.md for details about what you are allowed or not allowed
-to do with the code of THIS version of the mod.
-
-This fork is published in the spirit the original was: freely, for other
-people to read, run and learn from, but I cannot grant you rights over code
-that is not mine to license. If you plan to build on this, **please read and
-follow the LICENSE document.**
-
-Anyone is free to use my edits and additions to the code to add to their own
-forks or versions of the mod as long as you don't try to impersonate me and
-follow the License agreement's terms.
-
-## Credits
-
-- **[Dramatic Shape](https://github.com/DramaticShape/DramaticShapeVoxelMod)**
-  The voxel mod this is built on. The diorama, the battles and the shape of
-  the whole thing are his.
-- **[bryanthaboi](https://github.com/bryanthaboi/gen1recomp)** and the
-  Gen1Recomp contributors â€” the engine, and a mod platform generous enough
-  that almost none of this needed a patch.
-- **[Terrarium](https://github.com/BrenoBertucci/Terrarium)**
-  The fork created by BrenoBertucci from which my fork heavily draws assets and
-  code, see further above for a full list of their work.
-- **[StadiumFX](https://github.com/anxiousintrovert/StadiumBattleFX)**
-  Compatibility code was provided by its creator and added to this fork.
-- **[iOS UI fixes (wip)](https://github.com/absol89/DramaticShapeVoxelMod/commit/71c800eb143ee3aee49126d675c488282972d3c9)**
-  An attempt to fix the iOS UI issues, but not working yet.
-- **Nintendo, Creatures Inc. and GAME FREAK Inc.**: for the game. It is
-  theirs. This is only a coat of paint on a program that loads it.
+Pokemon and Nintendo trademarks belong to their respective owners. This is an
+unofficial fan-made mod and includes no ROM data.

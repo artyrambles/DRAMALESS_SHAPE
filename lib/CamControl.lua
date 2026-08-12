@@ -71,10 +71,9 @@ CamControl.SURVEY_PINCH = 2.2
 -- reasoning lives and which the RIG answers to as well -- so a stored
 -- angle from before the setting was switched on stands down with it).
 local function battleLive()
-  local ok, shot = pcall(function()
-    return V.require("OverworldBattle").shot()
-  end)
-  return (ok and shot and BattleCam.steerable) and true or false
+  -- StadiumBattleFX owns battle input and camera selection in 2.0. This
+  -- module now handles free-roam survey/third-person zoom only.
+  return false
 end
 
 CamControl.battleLive = battleLive

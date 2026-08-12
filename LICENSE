@@ -20,12 +20,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The OpenXR loader is shipped unmodified in assets/vr (Apache-2.0; full license text alongside the DLL).
+This repository contains code derived from DramaticShapeVoxelMod and
+MIT-licensed code from the TERRARIUM fork by BrenoBertucci, with fixes and
+additions by Stahltier (artyrambles). Beginning with the 2.0 release, those
+contributions are distributed under this MIT License.
 
-This repo contains code from DramaticShape's [Dramatic Shape Voxel Mod](https://github.com/DramaticShape/DramaticShapeVoxelMod), specifically v1.6.1.
-It also contains code from absol89's fork [BATTLE ART](https://github.com/absol89/DramaticShapeVoxelMod).
-It also contains code from the [TERRARIUM](https://github.com/BrenoBertucci/Terrarium) fork created by BrenoBertucci.
-It also contains compatibility code from the [StadiumBattleFX](https://github.com/anxiousintrovert/StadiumBattleFX) mod by anxiousintrovert.
-The DS fork BATTLE ART by absol_89 has been merged with this one from version 1.6.5 onwards.
-
-It also contains my own code which is provided under the [CC-BY-NC License](https://creativecommons.org/licenses/by-nc/4.0/).
+BattleArt assets/code, Stadium model extraction, and the Apache-2.0 OpenXR
+loader are not distributed in the Dramaless 2.0 voxel-only package.

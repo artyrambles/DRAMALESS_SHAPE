@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.0.0 - experimental split
+
+- Restored the original battle-picture paper-fill pass. Pale keyed pixels in
+  the player's Pokemon no longer expose the arena through bodies, eyes, or
+  highlights; pinned back sprites also use the legacy sealed-bottom rule.
+- Restored Dramaless's original native-card appearance: one-to-one sprite
+  capture at the legacy texture anchor, player-front mirroring, and upright
+  depth-tested Voxel3D billboards instead of screen-space battle canvases.
+- Restored the `BACK SPRITES` option. When enabled, the player's native back
+  picture remains in its original menu slot, only the enemy is staged in the
+  world, and the Dramaless battle camera holds the compatible solved shot.
+- Kept the API-1 arena/card provider additions; Stadium model extraction and
+  rendering remain owned by StadiumBattleFX.
+- Fixed the standalone host suppressing only ordinary battler pictures. It now
+  suppresses the complete captured native picture layer, including trainers
+  and send-out growth frames, so projected 2D cards are never doubled.
+- The standalone compositor now removes both classic 160x144 and wide 304x144
+  flat battle fields, preserving the fully 3D voxel arena behind the HUD.
+- The optional voxel battle arena now renders at framebuffer resolution and
+  widens the classic battle camera to the window exactly as the original
+  Dramaless staged-battle renderer did. StadiumBattleFX composites that
+  surface through Gen1Recomp's world-override seam.
+- Retained native Gen 1 2D cards as a narrowly scoped standalone voxel-battle
+  mode. Stadium models, replacement battle art, move animation, HUD,
+  transition, portable-disc, and camera ownership remain removed.
+- When StadiumBattleFX 2.x is installed, Dramaless yields its standalone host
+  and registers independent `VOXEL MAP` arena and `VOXEL 2D CARDS` model
+  providers so either can be mixed with Stadium's options.
+- The voxel arena consumes StadiumBattleFX's resolved camera pose, including
+  its temporary Battle Cinematics 0.7.96 compatibility camera. Battle
+  Cinematics does not need to detect Dramaless 2.0.
+
 ## 1.6.5 PRE-RELEASE
 - Full merge with BATTLE ART fork is in progress.
 - Expect borked options menu and visual glitches, we're working on it! There were dozens of files and literally thousands of lines of code to manually go through and review since our two forks are several versions apart when it comes to their base and what we did with them before merging them back together. It's bound to be a little messy.
@@ -3352,3 +3384,16 @@ one pin set covers all eleven Centers and the Celadon Hotel.
   instead of only this one.
 - The cut-tree animation now draws in voxel mode; the pre-mod version
   omitted it from the 3D field-effect list.
+# 2.0.0 (Experimental)
+
+- Split battle presentation into StadiumBattleFX 2.x; Dramaless now owns voxel environments only.
+- Added the optional `DRAMALESS_SHAPE:voxel-map` StadiumBattleFX API 1 arena provider.
+- Removed BattleArt sprites, 2D battle cards, Stadium models/extraction, disc stages, Horde, and OpenXR/VR.
+- Added structured persistent diagnostics and log export on Windows, macOS, Linux, and SteamOS.
+- Added hard manifest incompatibility gates between legacy and 2.x combinations.
+- Moved Stahltier's contributions to MIT for the 2.0 line.
+## 2.0.0 - local test build
+
+- Fixed the API-1 voxel battle arena unbinding StadiumBattleFX's parent battle
+  canvas and producing a pure white frame. The provider now restores canvas,
+  shader, depth, blend, color, and scissor state after its nested 3D pass.
