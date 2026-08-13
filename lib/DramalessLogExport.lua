@@ -38,8 +38,9 @@ local function destination()
     local home = os.getenv("HOME")
     if home and home ~= "" then return home .. "/Downloads/" .. NAME end
   end
-  local ok, save = pcall(function() return love.filesystem.getSaveDirectory() end)
-  return ok and save and (save .. "/" .. NAME) or nil
+  --local ok, save = pcall(function() return love.filesystem.getSaveDirectory() end)
+  --return ok and save and (save .. "/" .. NAME) or nil
+  return nil
 end
 
 function Export.export()
@@ -47,8 +48,8 @@ function Export.export()
   if not path then last = { state = "CANCELLED" }; return false end
   local file = io.open(path, "wb")
   if not file and osName() == "Linux" then
-    local ok, save = pcall(function() return love.filesystem.getSaveDirectory() end)
-    if ok and save then path = save .. "/" .. NAME; file = io.open(path, "wb") end
+    --local ok, save = pcall(function() return love.filesystem.getSaveDirectory() end)
+    --if ok and save then path = save .. "/" .. NAME; file = io.open(path, "wb") end
   end
   if not file then last = { state = "FAILED" }; return false end
   local wrote, writeErr = pcall(file.write, file, V.log:contents())

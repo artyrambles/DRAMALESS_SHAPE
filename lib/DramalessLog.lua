@@ -16,21 +16,22 @@ end
 
 function Log.new(host)
   local self = setmetatable({ host = host, lines = {} }, Log)
-  local fs = love and love.filesystem
-  if fs and fs.read and fs.getInfo and fs.getInfo(PATH, "file") then
-    local ok, contents = pcall(fs.read, PATH)
-    if ok and type(contents) == "string" then
-      for line in contents:gmatch("[^\r\n]+") do self.lines[#self.lines + 1] = line end
-    end
-  end
+  -- local fs = love and love.filesystem
+  -- if fs and fs.read and fs.getInfo and fs.getInfo(PATH, "file") then
+  --   local ok, contents = pcall(fs.read, PATH)
+  --   if ok and type(contents) == "string" then
+  --     for line in contents:gmatch("[^\r\n]+") do self.lines[#self.lines + 1] = line end
+  --   end
+  -- end
   return self
 end
 
 function Log:flush()
-  local fs = love and love.filesystem
-  if not (fs and fs.createDirectory and fs.write) then return false end
-  if fs.createDirectory("dramaless_shape") == false then return false end
-  return pcall(fs.write, PATH, table.concat(self.lines, "\n") .. "\n")
+  -- local fs = love and love.filesystem
+  -- if not (fs and fs.createDirectory and fs.write) then return false end
+  -- if fs.createDirectory("dramaless_shape") == false then return false end
+  -- return pcall(fs.write, PATH, table.concat(self.lines, "\n") .. "\n")
+  return false
 end
 
 function Log:record(level, message, ...)
