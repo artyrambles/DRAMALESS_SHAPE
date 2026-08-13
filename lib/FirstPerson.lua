@@ -760,17 +760,20 @@ function FirstPerson.install()
   -- Game:mousemoved to wrap -- the callback in the project's main.lua is
   -- the one place relative counts arrive. Claimed only while captured;
   -- pass-through otherwise, including the mouse-as-touch path.
-  do
-    local inner = love.mousemoved
-    love.mousemoved = function(x, y, dx, dy, istouch)
-      if captured and not istouch then
-        mouseDX = mouseDX + (dx or 0)
-        mouseDY = mouseDY + (dy or 0)
-        return
-      end
-      if inner then return inner(x, y, dx, dy, istouch) end
-    end
-  end
+
+  -- removed in 2.0.0 for sandbox compatibility
+  -- do
+  --   local inner = love.mousemoved
+  --   love.mousemoved = function(x, y, dx, dy, istouch)
+  --     if captured and not istouch then
+  --       mouseDX = mouseDX + (dx or 0)
+  --       mouseDY = mouseDY + (dy or 0)
+  --       return
+  --     end
+  --     if inner then return inner(x, y, dx, dy, istouch) end
+  --   end
+  -- end
+
   -- While the mouse is captured there is no cursor to click UI with, so
   -- the buttons become GB buttons: left is A, right is B -- through the
   -- overlay's own press path, which a rebind can never detach. What WE
