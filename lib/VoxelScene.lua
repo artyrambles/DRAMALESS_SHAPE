@@ -72,11 +72,18 @@ end
 VoxelScene._modeColors = modeColors   -- named for the suite
 
 -- added in 2.0.0
+
+local function overworld()
+  local Game = require("src.core.Game")
+  return Game and Game.overworld
+end
+
 -- posed must be a table with at least {px, py, isPlayer}
 -- me should be the player's position, but can be any position
 local function withinRenderDistance(posed, me)
   if not me then
-    local ow_player = V.mod.world:current()
+    local state = overworld()
+    local ow_player = state.player
     me = {px = ow_player.x, py = ow_player.y}
   end
   for _, p in ipairs(posed) do
