@@ -786,35 +786,35 @@ function FirstPerson.install()
   -- than on top of it, so a click during the mode never also lands as a
   -- GB button -- otherwise the A that ends the GAME OVER card would be
   -- spent by the shot that ended the run.
-  local mouseHeld = {}
-  local MOUSE_BTN = { [1] = "a", [2] = "b" }
-  do
-    local inner = love.mousepressed
-    love.mousepressed = function(x, y, button, istouch, presses)
-      if captured and not istouch and MOUSE_BTN[button] then
-        local Input = require("src.core.Input")
-        mouseHeld[button] = true
-        Input:overlayPressed(MOUSE_BTN[button])
-        return
-      end
-      if inner then return inner(x, y, button, istouch, presses) end
-    end
-  end
-  do
-    local inner = love.mousereleased
-    love.mousereleased = function(x, y, button, istouch, presses)
-      -- a release always reaches whoever owns the press: the horde's
-      -- aim-hold has to let go even if the mode ended mid-click
-      if not mouseHeld[button] then return end
-      if mouseHeld[button] then
-        local Input = require("src.core.Input")
-        mouseHeld[button] = nil
-        Input:overlayReleased(MOUSE_BTN[button])
-        return
-      end
-      if inner then return inner(x, y, button, istouch, presses) end
-    end
-  end
+  -- local mouseHeld = {}
+  -- local MOUSE_BTN = { [1] = "a", [2] = "b" }
+  -- do
+  --   local inner = love.mousepressed
+  --   love.mousepressed = function(x, y, button, istouch, presses)
+  --     if captured and not istouch and MOUSE_BTN[button] then
+  --       local Input = require("src.core.Input")
+  --       mouseHeld[button] = true
+  --       Input:overlayPressed(MOUSE_BTN[button])
+  --       return
+  --     end
+  --     if inner then return inner(x, y, button, istouch, presses) end
+  --   end
+  -- end
+  -- do
+  --   local inner = love.mousereleased
+  --   love.mousereleased = function(x, y, button, istouch, presses)
+  --     -- a release always reaches whoever owns the press: the horde's
+  --     -- aim-hold has to let go even if the mode ended mid-click
+  --     if not mouseHeld[button] then return end
+  --     if mouseHeld[button] then
+  --       local Input = require("src.core.Input")
+  --       mouseHeld[button] = nil
+  --       Input:overlayReleased(MOUSE_BTN[button])
+  --       return
+  --     end
+  --     if inner then return inner(x, y, button, istouch, presses) end
+  --   end
+  -- end
 
   -- ------- touch
   --
