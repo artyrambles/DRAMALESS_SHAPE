@@ -744,15 +744,16 @@ function FirstPerson.install()
   -- Game:mousemoved to wrap -- the callback in the project's main.lua is
   -- the one place relative counts arrive. Claimed only while captured;
   -- pass-through otherwise, including the mouse-as-touch path.
+  -- change from 2.0.0 backported to 1.6.4.1 for sandbox compatibility
   do
-    local inner = love.mousemoved
-    love.mousemoved = function(x, y, dx, dy, istouch)
+    local inner = Game.mousemoved
+    function Game:mousemoved(x, y, dx, dy, istouch)
       if captured and not istouch then
         mouseDX = mouseDX + (dx or 0)
         mouseDY = mouseDY + (dy or 0)
         return
       end
-      if inner then return inner(x, y, dx, dy, istouch) end
+      return inner(self, x, y, dx, dy, istouch)
     end
   end
   -- While the mouse is captured there is no cursor to click UI with, so
@@ -770,20 +771,20 @@ function FirstPerson.install()
   local mouseHeld = {}
   local MOUSE_BTN = { [1] = "a", [2] = "b" }
   do
-    local inner = love.mousepressed
-    love.mousepressed = function(x, y, button, istouch, presses)
+    local inner = Game.mousepressed
+    function Game:mousepressed(x, y, button, istouch)
       if captured and not istouch and MOUSE_BTN[button] then
         local Input = require("src.core.Input")
         mouseHeld[button] = true
         Input:overlayPressed(MOUSE_BTN[button])
         return
       end
-      if inner then return inner(x, y, button, istouch, presses) end
+      return inner(self, x, y, button, istouch)
     end
   end
   do
-    local inner = love.mousereleased
-    love.mousereleased = function(x, y, button, istouch, presses)
+    local inner = Game.mousereleased
+    function Game:mousereleased(x, y, button, istouch)
       -- a release always reaches whoever owns the press: the horde's
       -- aim-hold has to let go even if the mode ended mid-click
       if not mouseHeld[button] then return end
@@ -793,7 +794,7 @@ function FirstPerson.install()
         Input:overlayReleased(MOUSE_BTN[button])
         return
       end
-      if inner then return inner(x, y, button, istouch, presses) end
+      return inner(self, x, y, button, istouch)
     end
   end
 
