@@ -72,9 +72,9 @@ Quality.setting = ModSetting.new("renderScale", "RES",
 -- it finds (see SUN_SOFT in the scene shader). Twelve fetches against four,
 -- which is a desktop's price and not a phone's, so it sits at the top of
 -- the ladder and nothing arrives at it by default.
-Quality.shadowSetting = ModSetting.new("shadowQuality", "SHADOWS",
-                                       { "low", "off", "high", "soft" },
-                                       { "LOW", "OFF", "HIGH", "SOFT" })
+-- Quality.shadowSetting = ModSetting.new("shadowQuality", "SHADOWS",
+--                                        { "low", "off", "high", "soft" },
+--                                        { "LOW", "OFF", "HIGH", "SOFT" })
 
 -- Read through pcall and clamped, because these are consulted from inside
 -- the render path: a setting that could throw there would take the frame
@@ -89,10 +89,10 @@ function Quality.scale()
 end
 
 function Quality.shadows()
-  local ok, v = pcall(Quality.shadowSetting.get, Quality.shadowSetting)
-  if ok and (v == "off" or v == "high" or v == "low" or v == "soft") then
-    return v
-  end
+  -- local ok, v = pcall(Quality.shadowSetting.get, Quality.shadowSetting)
+  -- if ok and (v == "off" or v == "high" or v == "low" or v == "soft") then
+  --   return v
+  -- end
   return "low"
 end
 
