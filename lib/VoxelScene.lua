@@ -54,6 +54,8 @@ end
 
 VoxelScene._modeColors = modeColors   -- named for the suite
 
+local renderDistance = 200
+
 -- ------------------------------------------------------------------ sky --
 --
 -- The void behind the diorama is SKY, at every rung -- so the world reads as
