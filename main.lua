@@ -204,6 +204,9 @@ local SETTINGS = {
   { BackSpritesSetting,
     "Keep your own Pokemon on the battle menu, seen from behind in its original slot, while the foe remains a world card.",
     when = cardBattlesEnabled, full = true },
+  { VoxelScene.silhouetteSetting,
+  "Draw silhouettes for characters hidden behind voxel geometry. "
+  .. "OFF disables the silhouette pass completely." }, 
     -- 1ST's own look input, not a diorama knob -- offered whether or not FULL
     -- is on, and only while there's a first-person rung to look with.
   { FirstPerson.invertLookY,
