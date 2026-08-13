@@ -1,36 +1,86 @@
 # Changelog
 
-## 2.0.0 - experimental split
+## 2.0.0 - Big Fat Cleanup Time
 
-- Restored the original battle-picture paper-fill pass. Pale keyed pixels in
-  the player's Pokemon no longer expose the arena through bodies, eyes, or
-  highlights; pinned back sprites also use the legacy sealed-bottom rule.
-- Restored Dramaless's original native-card appearance: one-to-one sprite
-  capture at the legacy texture anchor, player-front mirroring, and upright
-  depth-tested Voxel3D billboards instead of screen-space battle canvases.
-- Restored the `BACK SPRITES` option. When enabled, the player's native back
-  picture remains in its original menu slot, only the enemy is staged in the
-  world, and the Dramaless battle camera holds the compatible solved shot.
-- Kept the API-1 arena/card provider additions; Stadium model extraction and
-  rendering remain owned by StadiumBattleFX.
-- Fixed the standalone host suppressing only ordinary battler pictures. It now
-  suppresses the complete captured native picture layer, including trainers
-  and send-out growth frames, so projected 2D cards are never doubled.
+**AKA: The King Is Dead, Long Live The King.**
+
+- Battle sprites no longer have transparent holes instead of their brightest palette color
+- The BACK SPRITES option now works as expected again and the sprites in battle
+  are 3D billboards again instead of screen-space canvases.
+- Battle camera is no longer extremely zoomed in.
+- ALL STADIUM-RELATED FEATURES WERE REMOVED. Dramaless is a VOXEL-RENDERER, not a 
+  Stadium Engine. The creator of the StadiumBattleFX mod and me worked together on
+  this version of Dramaless, so that all the Stadium features it had that didn't
+  actually belong in here were moved to StadiumBattleFX and the two are compatible.
+- 2D sprites in battle are no longer duplicated.
 - The standalone compositor now removes both classic 160x144 and wide 304x144
   flat battle fields, preserving the fully 3D voxel arena behind the HUD.
 - The optional voxel battle arena now renders at framebuffer resolution and
   widens the classic battle camera to the window exactly as the original
-  Dramaless staged-battle renderer did. StadiumBattleFX composites that
-  surface through Gen1Recomp's world-override seam.
+  Dramaless staged-battle renderer did. StadiumBattleFX has access to this composited view.
 - Retained native Gen 1 2D cards as a narrowly scoped standalone voxel-battle
-  mode. Stadium models, replacement battle art, move animation, HUD,
-  transition, portable-disc, and camera ownership remain removed.
+  mode. Along with the Stadium features, replacement battle art, move animation, HUD,
+  transition, portable-disc, and camera ownership have been removed.
 - When StadiumBattleFX 2.x is installed, Dramaless yields its standalone host
   and registers independent `VOXEL MAP` arena and `VOXEL 2D CARDS` model
   providers so either can be mixed with Stadium's options.
-- The voxel arena consumes StadiumBattleFX's resolved camera pose, including
-  its temporary Battle Cinematics 0.7.96 compatibility camera. Battle
-  Cinematics does not need to detect Dramaless 2.0.
+- The voxel arena works with StadiumBattleFX's camera, and Battle Cinematics 0.7.96.  
+  Cinematics does not need to detect Dramaless 2.0 in order to do its thing.
+- A very basic RENDER DISTANCE setting has been added. It now allows you to reduce the
+  game's 3D render distance, which means that anything beyond a certain distance simply
+  won't be drawn anymore. This should bring significant performance improvements especially
+  on mobile devices or lower end PCs.
+  This feature is still an early WIP and not finished yet. Further improvements are on the
+  way, for example replacing the 3D models with simple 2D stand-ins while they're out of
+  render distance to still preserve the illusion of a complete world.
+- Water and Sky should now work on Android again. However, the water renderer is VERY
+  expensive on resources. If your game is chugging like crazy, go to the Options and
+  set Water to OFF. It won't disappear, it will just be turned into a much more optimized
+  2D stand-in.
+- The battle UI has been reverted to its vanilla state. As with the Stadium feature, this
+  Voxel renderer mod had no business trying to change the look of the UI. This change doesn't
+  mean that I can guarantee it will now work flawlessly with mods that alter the UI, but
+  Dramaless should be getting in their way MUCH less.
+- VR support was removed entirely for the time being. As I've explained in the discord,
+  I have no equipment to test and debug it. There is at least one person working on a mod
+  that re-introduces (better) VR support to Gen1Recomp.
+- Made changes to the Log module and FirstPerson/CamControl files in order to comply to
+  the new modding API changes that will go live tomorrow and restrict mods from accessing
+  stuff outside their intended scope. This is a GOOD thing. I myself was the person who 
+  approached Bryan and asked him to make this change to the API. It makes the API much safer
+  and adds some of the functionality that was missing previously.
+- Sprites that are behind buildings will show a shadowy silhouette now. Thanks to Rob for
+  this code, it also helped me come up with the code for the render distance feature.
+  If this is immersion breaking to you, you can disable the sprite silhouettes in the options
+  menu. They are using existing renderer features so they shouldn't add any performance hit.
+- The options to choose which sprites to use in battle haven't been ported over from 
+  Battle Art. Changing the sprites is not something that the Voxel renderer mod should have
+  anything to do with.
+- That should be all. As always, if you notice any issues with this version, please let me
+  know by creating an Issue on github.
+- The 1.6.4 version of Dramaless will remain online as an archived LTS version for
+  backwards compatibility. It might see occasional hotfixes if Gen1Recomp updates and
+  breaks it somehow, but other than that it will remain the way it is with all its old
+  features (and problems) intact.
+- All future development will happen based on the 2.0.0 version.
+
+### Known Issues
+- The Water renderer is nightmarishly slow. If you experience any performance issues at all,
+  please try changing the `WATER` setting to SKY or OFF. OFF still renders an animated 2D
+  texture, which should immediately yield like twice the FPS.
+- The battle UI can be hard to see especially in the Voxel battle background mode.
+  This is intentionally left unchanged, as per the 2.0.0 philosophy, Dramaless doesn't
+  touch any code that isn't directly related to displaying the Voxel graphics 
+  of the overworld. I understand that it is an accessibility problem, so please look for
+  UI mods that are compatible and can alleviate this.
+- Setting the `SHADOWS` to OFF removes them from buildings and landmarks. It doesn't 
+  remove them from sprites. This isn't intentional and fixing it is on my to-do list.
+- Water is still being rendered outside the render distance. Please be patient, the water
+  rendering is a convoluted mess that I haven't been able to fully investigate yet.
+- Especially on a short render distance setting and if zoomed in, the neighboring maps
+  will not be loaded, making it seem like you are stepping into the void before they actually
+  load in. This will be addressed in future updates as parts of adding 2D impostors and only
+  culling the parts of the terrain that add aren't a resource-inexpensive flat plane.
 
 ## 1.6.5 PRE-RELEASE
 - Full merge with BATTLE ART fork is in progress.

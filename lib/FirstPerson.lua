@@ -761,18 +761,18 @@ function FirstPerson.install()
   -- the one place relative counts arrive. Claimed only while captured;
   -- pass-through otherwise, including the mouse-as-touch path.
 
-  -- removed in 2.0.0 for sandbox compatibility
-  -- do
-  --   local inner = love.mousemoved
-  --   love.mousemoved = function(x, y, dx, dy, istouch)
-  --     if captured and not istouch then
-  --       mouseDX = mouseDX + (dx or 0)
-  --       mouseDY = mouseDY + (dy or 0)
-  --       return
-  --     end
-  --     if inner then return inner(x, y, dx, dy, istouch) end
-  --   end
-  -- end
+  -- changed in 2.0.0 for sandbox compatibility
+  do
+    local inner = Game.mousemoved
+    function Game:mousemoved(x, y, dx, dy, istouch)
+      if captured and not istouch then
+        mouseDX = mouseDX + (dx or 0)
+        mouseDY = mouseDY + (dy or 0)
+        return
+      end
+      return inner(self, x, y, dx, dy, istouch)
+    end
+  end
 
   -- While the mouse is captured there is no cursor to click UI with, so
   -- the buttons become GB buttons: left is A, right is B -- through the
@@ -786,35 +786,35 @@ function FirstPerson.install()
   -- than on top of it, so a click during the mode never also lands as a
   -- GB button -- otherwise the A that ends the GAME OVER card would be
   -- spent by the shot that ended the run.
-  -- local mouseHeld = {}
-  -- local MOUSE_BTN = { [1] = "a", [2] = "b" }
-  -- do
-  --   local inner = love.mousepressed
-  --   love.mousepressed = function(x, y, button, istouch, presses)
-  --     if captured and not istouch and MOUSE_BTN[button] then
-  --       local Input = require("src.core.Input")
-  --       mouseHeld[button] = true
-  --       Input:overlayPressed(MOUSE_BTN[button])
-  --       return
-  --     end
-  --     if inner then return inner(x, y, button, istouch, presses) end
-  --   end
-  -- end
-  -- do
-  --   local inner = love.mousereleased
-  --   love.mousereleased = function(x, y, button, istouch, presses)
-  --     -- a release always reaches whoever owns the press: the horde's
-  --     -- aim-hold has to let go even if the mode ended mid-click
-  --     if not mouseHeld[button] then return end
-  --     if mouseHeld[button] then
-  --       local Input = require("src.core.Input")
-  --       mouseHeld[button] = nil
-  --       Input:overlayReleased(MOUSE_BTN[button])
-  --       return
-  --     end
-  --     if inner then return inner(x, y, button, istouch, presses) end
-  --   end
-  -- end
+  local mouseHeld = {}
+  local MOUSE_BTN = { [1] = "a", [2] = "b" }
+  do
+    local inner = Game.mousepressed
+    function Game:mousepressed(x, y, button, istouch)
+      if captured and not istouch and MOUSE_BTN[button] then
+        local Input = require("src.core.Input")
+        mouseHeld[button] = true
+        Input:overlayPressed(MOUSE_BTN[button])
+        return
+      end
+      return inner(self, x, y, button, istouch)
+    end
+  end
+  do
+    local inner = Game.mousereleased
+    function Game:mousereleased(x, y, button, istouch)
+      -- a release always reaches whoever owns the press: the horde's
+      -- aim-hold has to let go even if the mode ended mid-click
+      if not mouseHeld[button] then return end
+      if mouseHeld[button] then
+        local Input = require("src.core.Input")
+        mouseHeld[button] = nil
+        Input:overlayReleased(MOUSE_BTN[button])
+        return
+      end
+      return inner(self, x, y, button, istouch)
+    end
+  end
 
   -- ------- touch
   --

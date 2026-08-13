@@ -98,16 +98,16 @@ local function withinRenderDistance(subject)
     local dx = subject.px - mx
     local dy = subject.py - my
     local mag = math.sqrt(dx * dx + dy * dy) / 16
-    V.mod.log:info(tostring(dx).. ", ".. tostring(dy) .. " = " .. tostring(mag))
+   -- V.mod.log:info(tostring(dx).. ", ".. tostring(dy) .. " = " .. tostring(mag))
     if mag <= Quality.renderDistance() then
-      V.mod.log:info("passes render distance check.")
+     -- V.mod.log:info("passes render distance check.")
       return true
     end
   else
-    V.mod.log:info("is player.")
+ --   V.mod.log:info("is player.")
     return true
   end
-  V.mod.log:info("too far away.")
+ -- V.mod.log:info("too far away.")
   return false
 end
 
