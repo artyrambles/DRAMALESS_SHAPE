@@ -88,8 +88,10 @@ local function withinRenderDistance(posed, me)
   end
   for _, p in ipairs(posed) do
     if not (p.isPlayer and FirstPerson.hidePlayer()) then
-      local dx = p.px - me.px
-      local dy = p.py - me.py
+      local mx = me.px
+      local my = me.py
+      local dx = p.px - mx
+      local dy = p.py - my
 
       if (dx * dx + dy * dy <= Quality.renderDistance()) or (Quality.renderDistance() == -1) then
         return true
