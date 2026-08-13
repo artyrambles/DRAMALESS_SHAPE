@@ -31,12 +31,13 @@ local FORMAT = 2
 local RAW_CHUNK = 1024 * 1024
 
 local function available()
-  local fs = love and love.filesystem
-  return ffi ~= nil and fs and fs.read and fs.write and fs.createDirectory
-    and fs.newFile and fs.getDirectoryItems
-    and love.data and love.data.newByteData
-    and love.data.compress and love.data.decompress
-    and love.graphics and love.graphics.newMesh
+  --local fs = love and love.filesystem
+  -- return ffi ~= nil and fs and fs.read and fs.write and fs.createDirectory
+  --   and fs.newFile and fs.getDirectoryItems
+  --   and love.data and love.data.newByteData
+  --   and love.data.compress and love.data.decompress
+  --   and love.graphics and love.graphics.newMesh
+  return false
 end
 
 function Disk.available()
@@ -107,9 +108,9 @@ local function pathFor(map, slot, kind)
 end
 
 local function remove(path)
-  if love and love.filesystem and love.filesystem.remove then
-    pcall(love.filesystem.remove, path)
-  end
+  -- if love and love.filesystem and love.filesystem.remove then
+  --   pcall(love.filesystem.remove, path)
+  -- end
 end
 
 local function header(fp)
@@ -161,11 +162,12 @@ end
 
 local function readValidated(path, fp)
   if not available() then return nil end
-  local ok, blob = pcall(love.filesystem.read, path)
-  if not ok or not blob then return nil end
-  local pos = parseHeader(blob, fp)
-  if not pos then remove(path); return nil end
-  return blob, pos
+  --local ok, blob = pcall(love.filesystem.read, path)
+  --if not ok or not blob then return nil end
+  return nil
+  -- local pos = parseHeader(blob, fp)
+  -- if not pos then remove(path); return nil end
+  -- return blob, pos
 end
 
 function Disk.loadTerrain(map, slot, masks)
@@ -240,19 +242,20 @@ local function writeChunked(file, ptr, n)
 end
 
 local function writeFile(path, fp, writer)
-  if not available() then return false end
-  local ok = pcall(function()
-    assert(love.filesystem.createDirectory(Disk.DIRECTORY))
-    local file = assert(love.filesystem.newFile(path, "w"))
-    local wrote, err = pcall(function()
-      write(file, header(fp))
-      writer(file)
-    end)
-    file:close()
-    if not wrote then error(err, 0) end
-  end)
-  if not ok then remove(path) end
-  return ok
+  -- if not available() then return false end
+  -- local ok = pcall(function()
+  --   assert(love.filesystem.createDirectory(Disk.DIRECTORY))
+  --   local file = assert(love.filesystem.newFile(path, "w"))
+  --   local wrote, err = pcall(function()
+  --     write(file, header(fp))
+  --     writer(file)
+  --   end)
+  --   file:close()
+  --   if not wrote then error(err, 0) end
+  -- end)
+  -- if not ok then remove(path) end
+  -- return ok
+  return false
 end
 
 function Disk.saveTerrain(map, slot, masks, terrain, water)
@@ -290,11 +293,12 @@ end
 function Disk.invalidate(mapId)
   if not (available() and mapId) then return end
   local prefix = safeId(mapId) .. "."
-  local ok, names = pcall(love.filesystem.getDirectoryItems, Disk.DIRECTORY)
-  if not ok then return end
-  for _, name in ipairs(names or {}) do
-    if name:sub(1, #prefix) == prefix then remove(Disk.DIRECTORY .. "/" .. name) end
-  end
+  --local ok, names = pcall(love.filesystem.getDirectoryItems, Disk.DIRECTORY)
+  --if not ok then return end
+  return
+  -- for _, name in ipairs(names or {}) do
+  --   if name:sub(1, #prefix) == prefix then remove(Disk.DIRECTORY .. "/" .. name) end
+  -- end
 end
 
 return Disk

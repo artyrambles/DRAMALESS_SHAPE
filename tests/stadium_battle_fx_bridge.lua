@@ -1,9 +1,9 @@
 local function loader(path)
   local chunk, err = loadfile(path)
   if chunk then return chunk end
-  if love and love.filesystem and love.filesystem.load then
-    return love.filesystem.load(path)
-  end
+  -- if love and love.filesystem and love.filesystem.load then
+  --   return love.filesystem.load(path)
+  -- end
   return nil, err
 end
 local registrations = {}
