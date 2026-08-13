@@ -1,3 +1,6 @@
+# THIS BRANCH IS OUTDATED AND HAS BEEN MERGED INTO MAIN.
+IT WILL BE DELETED IN THE FUTURE.
+
 # Dramaless Shape 2.0
 
 Dramaless Shape renders the Gen1Recomp overworld as a depth-buffered voxel
