@@ -71,7 +71,25 @@ end
 
 VoxelScene._modeColors = modeColors   -- named for the suite
 
-local renderDistance = 200
+-- added in 2.0.0
+-- posed must be a table with at least {px, py, isPlayer}
+-- me should be the player's position, but can be any position
+local function withinRenderDistance(posed, me)
+  if not me then
+    local ow_player = V.mod.world:current()
+    me = {px = ow_player.x, py = ow_player.y}
+  end
+  for _, p in ipairs(posed) do
+    if not (p.isPlayer and FirstPerson.hidePlayer()) then
+      local dx = p.px - me.px
+      local dy = p.py - me.py
+
+      if (dx * dx + dy * dy <= Quality.renderDistance()) or (Quality.renderDistance() == -1) then
+        return true
+      end
+    end
+  end
+end
 
 -- ------------------------------------------------------------------ sky --
 --
@@ -357,6 +375,7 @@ end
 -- where the 2D path could only slide the sprite north).
 local function drawEntity(sprite, px, py, facing, phase, flip, gh, colors,
                           lift)
+
   local def = sprite.def
   local tex = sprite:resolveImage()
   if colors and not def.trueColor then
@@ -534,6 +553,16 @@ end
 -- below). All posed objects will cast a silhouette when hidden by voxel 
 -- geometry. The player is additionally suppressed while the first-person 
 -- camera is inside their card.
+
+local poseBuf = {}
+
+local function poseSlot(i)
+  local p = poseBuf[i]
+  if not p then p = {}; poseBuf[i] = p end
+  p.isPlayer = nil
+  return p
+end
+
 local function posesOf(state, spriteColors)
   local colors = spriteColors(state.map)
   local n, me = 0, nil
@@ -638,6 +667,7 @@ local function drawCast(state, posed, atlasFor)
   -- by this same function -- agrees with the frame to the pixel.
   local hideMe = FirstPerson.hidePlayer()
   for _, p in ipairs(posed) do
+    if not withinRenderDistance(p, nil) then return end -- added in 2.0.0
     if not (p.isPlayer and hideMe) then
       drawEntity(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
                  p.colors, p.lift)
@@ -851,6 +881,7 @@ end
 local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
                            atlasFor, water, nbWater)
   if not ShadowMap.available() then return end
+  if not withinRenderDistance(posed, nil) then return end -- added in 2.0.0
   local sig = shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
   if not ShadowMap.stale(sig) then return end
   if not ShadowMap.begin(cx, cy, vw, vh) then return end
@@ -1029,8 +1060,10 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
 
   Voxel3D.draw(terrain, atlasFor(state.map), nil)
   for i, nb in ipairs(state.neighbors or {}) do
-    Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
+    if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}, me) then -- added in 2.0.0
+      Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
                  Mat4.translate(nb.ox, 0, nb.oy))
+    end
   end
 
   -- Without a shadow map (headless, or a driver that could not make the
@@ -1043,8 +1076,10 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
 if not Voxel3D.shadowsActive() and not Quality.shadowsOff() then
   Voxel3D.beginShadows()
   for _, p in ipairs(posed) do
-    drawShadow(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
+    if withinRenderDistance(p, me) then -- added in 2.0.0
+      drawShadow(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
                p.lift)
+    end
   end
   Voxel3D.endShadows()
 end

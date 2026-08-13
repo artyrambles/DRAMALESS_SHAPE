@@ -199,6 +199,7 @@ local SETTINGS = {
   { Shadows.setting, "Enable voxel-world cast shadows.", full = true },
   { AntiAlias.setting, "Supersample the voxel world for smoother geometry edges.", full = true },
   { Quality.setting, "Choose the voxel render resolution scale.", full = true },
+  { Quality.renderDistanceSetting, "Choose the render distance.", full = true },
  -- { Quality.shadowSetting, "Choose full, low-cost, or disabled cast shadows.", full = true },
   { BackSpritesSetting,
     "Keep your own Pokemon on the battle menu, seen from behind in its original slot, while the foe remains a world card.",

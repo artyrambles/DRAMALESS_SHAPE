@@ -76,6 +76,11 @@ Quality.setting = ModSetting.new("renderScale", "RES",
 --                                        { "low", "off", "high", "soft" },
 --                                        { "LOW", "OFF", "HIGH", "SOFT" })
 
+-- new setting added in 2.0.0
+Quality.renderDistanceSetting = ModSetting.new("renderDistanceSetting", "R.DIST",
+                                 { 16, -1, 32, 64 },
+                                 { "SHORT", "FULL", "MEDIUM", "FAR" })
+
 -- Read through pcall and clamped, because these are consulted from inside
 -- the render path: a setting that could throw there would take the frame
 -- with it, and the whole contract of this mod is that it falls back rather
@@ -85,6 +90,14 @@ function Quality.scale()
   local n = (ok and tonumber(v)) or 2
   if n < 1 then n = 1 end
   if n > 4 then n = 4 end
+  return math.floor(n)
+end
+
+function Quality.renderDistance()
+  local ok, v = pcall(Quality.renderDistanceSetting.get, Quality.renderDistanceSetting)
+  local n = (ok and tonumber(v)) or -1
+  if n ~= -1 and n < 16 then n = 16 end
+  if n > 64 then n = 64 end
   return math.floor(n)
 end
 
