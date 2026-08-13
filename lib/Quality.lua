@@ -98,6 +98,8 @@ function Quality.renderDistance()
   local n = (ok and tonumber(v)) or -1
   if n ~= -1 and n < 16 then n = 16 end
   if n > 64 then n = 64 end
+  if n == -1 then n = 128 end
+  n = n * 2
   return math.floor(n)
 end
 

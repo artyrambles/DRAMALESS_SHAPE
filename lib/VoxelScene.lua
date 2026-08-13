@@ -78,26 +78,37 @@ local function overworld()
   return Game and Game.overworld
 end
 
+-- this is missing from the default library
+function math.clamp(n, low, high) 
+  return math.min(math.max(n, low), high) 
+end
+function math.sign(n)
+  return n > 0 and 1 or  n < 0 and 1 or 0
+end
+
 -- posed must be a table with at least {px, py, isPlayer}
 -- me should be the player's position, but can be any position
-local function withinRenderDistance(posed, me)
-  if not me then
-    local state = overworld()
-    local ow_player = state.player
-    me = {px = ow_player.x, py = ow_player.y}
-  end
-  for _, p in ipairs(posed) do
-    if not (p.isPlayer and FirstPerson.hidePlayer()) then
-      local mx = me.px
-      local my = me.py
-      local dx = p.px - mx
-      local dy = p.py - my
-
-      if (dx * dx + dy * dy <= Quality.renderDistance()) or (Quality.renderDistance() == -1) then
-        return true
-      end
+local function withinRenderDistance(subject)
+  local state = overworld()
+  local ow_player = state.player
+  local me = {px = ow_player.cellX, py = ow_player.cellY}
+  if not (subject.isPlayer) then
+    local mx = me.px
+    local my = me.py
+    local dx = subject.px - mx
+    local dy = subject.py - my
+    local mag = math.sqrt(dx * dx + dy * dy) / 16
+    V.mod.log:info(tostring(dx).. ", ".. tostring(dy) .. " = " .. tostring(mag))
+    if mag <= Quality.renderDistance() then
+      V.mod.log:info("passes render distance check.")
+      return true
     end
+  else
+    V.mod.log:info("is player.")
+    return true
   end
+  V.mod.log:info("too far away.")
+  return false
 end
 
 -- ------------------------------------------------------------------ sky --
@@ -676,10 +687,12 @@ local function drawCast(state, posed, atlasFor)
   -- by this same function -- agrees with the frame to the pixel.
   local hideMe = FirstPerson.hidePlayer()
   for _, p in ipairs(posed) do
-    if not withinRenderDistance(p, nil) then return end -- added in 2.0.0
+    --if not withinRenderDistance(p, nil) then return end -- added in 2.0.0
     if not (p.isPlayer and hideMe) then
-      drawEntity(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
+      if withinRenderDistance(p) then
+        drawEntity(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
                  p.colors, p.lift)
+      end
     end
   end
   -- back on for everything textured from the atlas again -- figures, grass
@@ -829,6 +842,7 @@ function VoxelScene.drawWater(draws, cast)
   -- same meshes down, in which case a bailed frame is already whole
   if plain then
     for _, d in ipairs(draws) do
+
       Voxel3D.draw(d[1], d[2], d[3])
     end
   end
@@ -890,7 +904,6 @@ end
 local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
                            atlasFor, water, nbWater)
   if not ShadowMap.available() then return end
-  if not withinRenderDistance(posed, nil) then return end -- added in 2.0.0
   local sig = shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
   if not ShadowMap.stale(sig) then return end
   if not ShadowMap.begin(cx, cy, vw, vh) then return end
@@ -1069,7 +1082,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
 
   Voxel3D.draw(terrain, atlasFor(state.map), nil)
   for i, nb in ipairs(state.neighbors or {}) do
-    if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}, me) then -- added in 2.0.0
+    if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then -- added in 2.0.0
       Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
                  Mat4.translate(nb.ox, 0, nb.oy))
     end
@@ -1085,7 +1098,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
 if not Voxel3D.shadowsActive() and not Quality.shadowsOff() then
   Voxel3D.beginShadows()
   for _, p in ipairs(posed) do
-    if withinRenderDistance(p, me) then -- added in 2.0.0
+    if withinRenderDistance(p) then -- added in 2.0.0
       drawShadow(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
                p.lift)
     end
@@ -1109,27 +1122,27 @@ end
     waterN = waterN + 1
     local d = waterDraws[waterN]
     if not d then d = {}; waterDraws[waterN] = d end
-    d[1], d[2], d[3] = mesh, texture, model
-  end
-
-  if water then
-    addWaterDraw(water, atlasFor(state.map), nil)
-  end
-  for i, nb in ipairs(state.neighbors or {}) do
-    if nbWater and nbWater[i] then
-      addWaterDraw(nbWater[i], atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy))
+      d[1], d[2], d[3] = mesh, texture, model
     end
-  end
-  for i = waterN + 1, #waterDraws do waterDraws[i] = nil end
-  -- the cast goes into the reflection copy only -- see drawWater for why it
-  -- cannot be composited yet and why it is drawn through the same function
-  -- the real pass below uses
-  if #waterDraws > 0 then
-    VoxelScene.drawWater(waterDraws, function()
-      drawCast(state, posed, atlasFor)
-    end)
-  end
+
+    if water then
+      addWaterDraw(water, atlasFor(state.map), nil)
+    end
+    for i, nb in ipairs(state.neighbors or {}) do
+      if nbWater and nbWater[i] then
+        addWaterDraw(nbWater[i], atlasFor(nb.map),
+                    Mat4.translate(nb.ox, 0, nb.oy))
+      end
+    end
+    for i = waterN + 1, #waterDraws do waterDraws[i] = nil end
+    -- the cast goes into the reflection copy only -- see drawWater for why it
+    -- cannot be composited yet and why it is drawn through the same function
+    -- the real pass below uses
+    if #waterDraws > 0 then
+      VoxelScene.drawWater(waterDraws, function()
+        drawCast(state, posed, atlasFor)
+      end)
+    end
 
 
   -- Sprite sheets from here to the figure pass: their texture coordinates
@@ -1153,27 +1166,27 @@ end
   -- test only sees terrain/buildings/trees and not the characters themselves.
   -- fyi world tiles use 32 pixels per map cell, and this determines if a silhouette
   -- is drawn based on how far an object is from the player. So 10 would be 320 pixels,
-VoxelScene.GHOST_RADIUS_CELLS = 15
+  VoxelScene.GHOST_RADIUS_CELLS = 15
 
-local ghostRadius = VoxelScene.GHOST_RADIUS_CELLS * 32
-local ghostRadiusSq = ghostRadius * ghostRadius
-if VoxelScene.silhouettesEnabled()
-   and me and not FirstPerson.hidePlayer() then
-  Voxel3D.beginGhost()
+  local ghostRadius = VoxelScene.GHOST_RADIUS_CELLS * 32
+  local ghostRadiusSq = ghostRadius * ghostRadius
+  if VoxelScene.silhouettesEnabled()
+    and me and not FirstPerson.hidePlayer() then
+      Voxel3D.beginGhost()
 
-  for _, p in ipairs(posed) do
-    if not (p.isPlayer and FirstPerson.hidePlayer()) then
-      local dx = p.px - me.px
-      local dy = p.py - me.py
+    for _, p in ipairs(posed) do
+      if not (p.isPlayer and FirstPerson.hidePlayer()) then
+        local dx = p.px - me.px
+        local dy = p.py - me.py
 
-      if dx * dx + dy * dy <= ghostRadiusSq then
-        drawGhost(p)
+        if dx * dx + dy * dy <= ghostRadiusSq then
+          drawGhost(p)
+        end
       end
     end
-  end
 
-  Voxel3D.endGhost()
-end
+    Voxel3D.endGhost()
+  end
 
   -- Characters carry no wireframe out here, whatever the V-GRID row says.
   -- The seams are what makes the WORLD read as built out of voxels, and
@@ -1199,8 +1212,10 @@ end
   local pull = VoxelScene.pull(math.max(Voxel.angle, 0.05))
   Voxel3D.draw(ChunkMesher.grass(state.map), atlasFor(state.map), nil, pull)
   for _, nb in ipairs(state.neighbors or {}) do
-    Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
+    if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then
+     Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
                  Mat4.translate(nb.ox, 0, nb.oy), pull)
+    end
   end
   -- flower billboards: pulled like the characters and the grass, MINUS
   -- the depth of 8 world pixels along the view (8 sin a -- the camera
@@ -1218,9 +1233,11 @@ end
   Voxel3D.draw(ChunkMesher.flowers(state.map), atlasFor(state.map), nil,
                fpull, ShadowMap.snug(nil))
   for _, nb in ipairs(state.neighbors or {}) do
-    Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
+    if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then
+      Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
                  Mat4.translate(nb.ox, 0, nb.oy), fpull,
                  ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
+    end
   end
 
   return Voxel3D.endScene()
