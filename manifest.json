@@ -21,11 +21,10 @@
     "STADIUM_BATTLE_FX@<2.0.0"
   ],
   "permissions": [
-    "engine_internals",
-    "filesystem"
+    "engine_internals"
   ],
   "affects_link": false,
-  "experimental": true,
+  "experimental": false,
   "description": "Voxel environments for Gen1Recomp, with standalone native-2D voxel battles and optional StadiumBattleFX providers.",
   "github": "artyrambles/DRAMALESS_SHAPE"
 }
