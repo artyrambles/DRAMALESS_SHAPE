@@ -160,7 +160,7 @@ function ModSetting:schema(help)
   for i, v in ipairs(self.values) do choices[i] = { self.labels[i], v } end
   if #self.values == 2 and self.values[1] == false then
     return { key = self.key, type = "toggle", label = self.label,
-             default = self.values[1], help = help }
+             default = self.values[self.defaultIndex or 1], help = help }
   end
   return { key = self.key, type = "choice", label = self.label,
              choices = choices, default = self.values[self.defaultIndex or 1],

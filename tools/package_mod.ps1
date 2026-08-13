@@ -1,81 +1,37 @@
-param(
-  [string]$Output = ""
-)
-
+param([string]$Output = "")
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-function Relative-Path([string]$FullName) {
-  return $FullName.Substring($repo.Length + 1).Replace('\', '/')
-}
-
-# Derive the package name from the mod's own manifest (id + version) so the
-# produced .zip matches what the in-game mod manager expects for auto-update:
-# ModUpdate.pickZipAsset prefers exactly "<id>-<version>.zip". A hardcoded
-# "DramaticShapeVoxelMod-battle-art" name stopped matching once the manifest
-# id was renamed, which is why post-rename updates failed to resolve.
-$manifest = Get-Content -Raw -LiteralPath (Join-Path $repo 'manifest.json') |
-  ConvertFrom-Json
-$modId = $manifest.id
-$modVersion = ($manifest.version -replace '^[vV]', '')
-if (-not $modId -or -not $modVersion) {
-  throw "manifest.json is missing id or version"
-}
-
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $repo "manifest.json") | ConvertFrom-Json
 if (-not $Output) {
-  $Output = Join-Path (Split-Path $repo -Parent) ($modId + '-' + $modVersion + '.zip')
+  $Output = Join-Path (Split-Path $repo -Parent) ($manifest.id + "-" + $manifest.version + ".zip")
 }
-$Output = [System.IO.Path]::GetFullPath($Output)
-
-$source = @()
-foreach ($dir in @('data', 'lib')) {
-  $source += Get-ChildItem -LiteralPath (Join-Path $repo $dir) -Recurse -File |
-    ForEach-Object {
-      Relative-Path $_.FullName
+$Output = [IO.Path]::GetFullPath($Output)
+$files = @()
+foreach ($dir in @("assets", "baseroms", "data", "lib")) {
+  $path = Join-Path $repo $dir
+  if (Test-Path -LiteralPath $path) {
+    $files += Get-ChildItem -LiteralPath $path -Recurse -File | ForEach-Object {
+      $_.FullName.Substring($repo.Length + 1).Replace("\", "/")
     }
+  }
 }
-$source += @('CHANGELOG.md', 'main.lua', 'manifest.json', 'mod.card', 'README.md')
-$contracts = @(Get-ChildItem -LiteralPath (Join-Path $repo 'assets\battle') `
-  -Recurse -File -Filter 'README.md' | ForEach-Object {
-    Relative-Path $_.FullName
-  })
-
-# These files are deliberately ignored by Git, but a local test build should
-# include them. This bridges a clean public branch and private BYO artwork.
-$localArt = @(Get-ChildItem -LiteralPath (Join-Path $repo 'assets\battle') `
-  -Recurse -File -Filter '*.png' -ErrorAction SilentlyContinue | ForEach-Object {
-    $relative = Relative-Path $_.FullName
-    # Authoring drafts may live beside a collection in a folder literally
-    # named "backup". They are never runtime candidates and must not inflate
-    # or leak into the private test package.
-    if ($relative -notmatch '(?i)(^|/)backup(/|$)') { $relative }
-  })
-$files = @($source + $contracts + $localArt | Sort-Object -Unique)
-if (-not $files.Count) { throw "no package files found" }
-
+$files += @("CHANGELOG.md", "LICENSE", "README.md", "main.lua", "manifest.json", "mod.card")
+$files = @($files | Sort-Object -Unique)
 if (Test-Path -LiteralPath $Output) { Remove-Item -LiteralPath $Output -Force }
-$fileList = [System.IO.Path]::GetTempFileName()
-[System.IO.File]::WriteAllLines(
-  $fileList,
-  [string[]]$files,
-  [System.Text.UTF8Encoding]::new($false)
-)
-Push-Location $repo
+$list = [IO.Path]::GetTempFileName()
 try {
-  # Passing hundreds of asset paths as individual arguments exceeds the
-  # Windows command-line limit. tar's list-file option keeps the invocation
-  # short while preserving repository-relative paths inside the archive.
-  & tar -a -cf $Output -T $fileList
-  if ($LASTEXITCODE -ne 0) { throw "tar failed: $LASTEXITCODE" }
-} finally {
-  Pop-Location
-  Remove-Item -LiteralPath $fileList -Force -ErrorAction SilentlyContinue
-}
-
+  [IO.File]::WriteAllLines($list, [string[]]$files, [Text.UTF8Encoding]::new($false))
+  Push-Location $repo
+  try { & tar -a -cf $Output -T $list; if ($LASTEXITCODE) { throw "tar failed" } }
+  finally { Pop-Location }
+} finally { Remove-Item -LiteralPath $list -Force -ErrorAction SilentlyContinue }
 $entries = @(tar -tf $Output)
+$forbidden = @($entries | Where-Object {
+  $_ -match "(?i)(^|/)(assets/battle|assets/vr|model_extract)(/|$)" -or
+  $_ -match "(?i)(BattleArt|OverworldBattle|StadiumRom|VRXR)"
+})
+if ($forbidden.Count) { throw "package contains removed 1.x content: $($forbidden -join ', ')" }
 [PSCustomObject]@{
-  Path = $Output
-  Entries = $entries.Count
-  LocalPngs = $localArt.Count
-  Bytes = (Get-Item -LiteralPath $Output).Length
-  SHA256 = (Get-FileHash -LiteralPath $Output -Algorithm SHA256).Hash
+  Path = $Output; Entries = $entries.Count; Bytes = (Get-Item $Output).Length
+  SHA256 = (Get-FileHash $Output -Algorithm SHA256).Hash
 }

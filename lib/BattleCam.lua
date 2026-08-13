@@ -180,13 +180,14 @@ BattleCam.ZOOM_MIN = 0.45         -- the pair filling the frame
 BattleCam.ZOOM_MAX = 2.0          -- the fight in its own landscape
 BattleCam.ZOOM_STEP = 1.15
 BattleCam.ZOOM_TIME = 0.18
+BattleCam.DEFAULT_ZOOM = 1.3      -- open the resting shot by 30 percent
 
 BattleCam.orbit = 0
 BattleCam.orbitGoal = 0
 BattleCam.pitch = 0
 BattleCam.pitchGoal = 0
-BattleCam.zoom = 1
-BattleCam.zoomGoal = 1
+BattleCam.zoom = BattleCam.DEFAULT_ZOOM
+BattleCam.zoomGoal = BattleCam.DEFAULT_ZOOM
 
 -- Whether the player may steer at all. BACK SPRITES clears it: that
 -- setting pins the player's own mon to the GB's own slot on the menu
@@ -245,7 +246,7 @@ function BattleCam.seedFromFreeCamera()
   if FirstPerson.lastYaw == nil
      and BattleCam.orbitGoal == 0
      and BattleCam.pitchGoal == 0
-     and BattleCam.zoomGoal == 1 then
+     and BattleCam.zoomGoal == BattleCam.DEFAULT_ZOOM then
     return false
   end
 
@@ -289,7 +290,8 @@ end
 function BattleCam.recentre()
   BattleCam.orbit, BattleCam.orbitGoal = 0, 0
   BattleCam.pitch, BattleCam.pitchGoal = 0, 0
-  BattleCam.zoom, BattleCam.zoomGoal = 1, 1
+  BattleCam.zoom, BattleCam.zoomGoal = BattleCam.DEFAULT_ZOOM,
+                                        BattleCam.DEFAULT_ZOOM
 end
 
 -- How far the eye may swing, in radians, before it is square to the arena's

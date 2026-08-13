@@ -2,7 +2,7 @@
   "id": "DRAMALESS_SHAPE"
 ,
   "name": "Dramaless Shape Voxel Mod",
-  "version": "1.6.5.PRE",
+  "version": "2.0.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -10,16 +10,22 @@
   "game_version": "0.0.0-dev || >=0.1.37 <2.0.0",
   "priority": 100,
   "dependencies": [],
-  "optional_dependencies": ["BATTLE_ART_VOXEL_FORK@>=1.8.1"],
+  "optional_dependencies": [
+    "STADIUM_BATTLE_FX@>=2.0.0 <3.0.0"
+  ],
   "conflicts": [
     "DRAMATIC_SHAPE",
     "TERRARIUM",
-    "potato_voxel"
+    "BATTLE_ART_VOXEL_FORK",
+    "potato_voxel",
+    "STADIUM_BATTLE_FX@<2.0.0"
   ],
   "permissions": [
-    "engine_internals"
+    "engine_internals",
+    "filesystem"
   ],
   "affects_link": false,
-  "description": "Draws the overworld as a 3D diorama. Fork with edits by Stahltier and others.",
+  "experimental": true,
+  "description": "Voxel environments for Gen1Recomp, with standalone native-2D voxel battles and optional StadiumBattleFX providers.",
   "github": "artyrambles/DRAMALESS_SHAPE"
 }

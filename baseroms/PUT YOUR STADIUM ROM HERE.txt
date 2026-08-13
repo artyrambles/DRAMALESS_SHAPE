@@ -1,0 +1,5 @@
+Keep this folder in every DRAMALESS_SHAPE installation.
+
+StadiumBattleFX 2.0 owns Stadium model, arena, effect, and announcer extraction.
+For a private local setup, keep your legally obtained Pokemon Stadium ROM in
+the corresponding mod's baseroms folder. Public packages do not include ROMs.

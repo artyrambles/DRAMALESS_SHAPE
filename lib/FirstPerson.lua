@@ -119,13 +119,8 @@ FirstPerson.blend = 0
 FirstPerson.lastYaw = nil
 FirstPerson.lastPitch = nil
 
--- A multiplier on the first-person field of view, for anything that wants
--- to narrow the lens without owning the rig: 1 is the ordinary 65
--- degrees, and horde mode's iron sights ease it down toward 40 while the
--- player is looking down them (lib/HordeGun). Kept here rather than in
--- the caller because the fov is folded into the orbit blend below, and
--- because signature() has to know -- a lens that narrows while the player
--- stands still still has to re-fit the shadow box.
+-- A multiplier on the first-person field of view. Kept in the rig because
+-- signature() must notice any lens change even while the player stands still.
 FirstPerson.fovScale = 1
 
 local wasEngaged = false
@@ -229,16 +224,6 @@ end
 function FirstPerson.cardBlend()
   if not rig or Voxel3D.camera ~= rig then return 0 end
   return ease(FirstPerson.blend)
-end
-
--- A VR eye stepping into the rig's shoes: the VR pass builds its own
--- placed cameras (one per eye) and hands each one here as it draws, so
--- everything keyed to "the first-person rig is drawing" -- the billboard
--- yaw, the frame remap, the hidden player card -- answers for that eye.
--- In the diorama (blend 0) adoption is inert: cardBlend still reports
--- zero and the cards keep their lean.
-function FirstPerson.adoptVReye(record)
-  rig = record
 end
 
 -- Whether the player's own card should be left out of the camera draw:

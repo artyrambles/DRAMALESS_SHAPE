@@ -159,18 +159,8 @@ end
 -- is extended() below, which stays true through the ease after the rung is
 -- left, the same way FirstPerson.blend outlives its own rung.
 --
--- A live headset declines the boom outright: VR builds its own eye cameras
--- from the tracked pose and never asks place() where to stand, and a
--- headset that seats its wearer three cells behind their own body is a
--- well-known way to make people ill. Answering false here is what keeps
--- everything ELSE the extension decides -- the player's own card, the body
--- that turns as it walks -- honest about the head VR actually puts you in.
--- Required lazily and guarded: VR reaches this module through FirstPerson,
--- and a headless run has no VR module worth loading at all.
 local function headset()
-  -- No VR module in this fork: a headset is never present.
-  local on = false
-  return on
+  return false -- VR was removed from the 2.0 voxel-only line.
 end
 
 function ThirdPerson.selected()
