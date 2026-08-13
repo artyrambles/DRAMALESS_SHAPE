@@ -197,6 +197,12 @@ local SETTINGS = {
   { BackSpritesSetting,
     "Keep your own Pokemon on the battle menu, seen from behind in its original slot, while the foe remains a world card.",
     when = cardBattlesEnabled, full = true },
+    -- 1ST's own look input, not a diorama knob -- offered whether or not FULL
+    -- is on, and only while there's a first-person rung to look with.
+  { FirstPerson.invertLookY,
+    "Invert the right stick's up/down look in 1ST: pull back to look up, "
+    .. "push forward to look down.",
+    when = function() return FirstPerson.engaged() end, full = true },
 }
 
 local schema = {}
