@@ -3,7 +3,7 @@
 -- selector/host and all Stadium model presentation when it is installed.
 
 local mod = ...
-mod.exports.version = "2.0.0"
+mod.exports.version = "2.0.2"
 
 local V = { mod = mod, path = mod.path }
 local modules, dataFiles = {}, {}
