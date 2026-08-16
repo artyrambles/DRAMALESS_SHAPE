@@ -61,7 +61,7 @@ local Quality = {}
 -- fallback for an unreadable stored value -- is the cheap rung rather than
 -- the pretty one. Cycling still walks it in a sensible direction; it just
 -- starts where a phone wants to start.
-Quality.setting = ModSetting.new("renderScale", "RES",
+Quality.setting = ModSetting.new("renderScale", "RENDER SCALE",
                                  { 2, 1, 3, 4 },
                                  { "1/2", "FULL", "1/3", "1/4" })
 
@@ -77,9 +77,9 @@ Quality.setting = ModSetting.new("renderScale", "RES",
 --                                        { "LOW", "OFF", "HIGH", "SOFT" })
 
 -- new setting added in 2.0.0
-Quality.renderDistanceSetting = ModSetting.new("renderDistanceSetting", "R.DIST",
-                                 { 16, -1, 32, 64 },
-                                 { "SHORT", "FULL", "MEDIUM", "FAR" })
+Quality.renderDistanceSetting = ModSetting.new("renderDistanceSetting", "RENDER DISTANCE",
+                                 { 64, 32, 16, -1},
+                                 {"FAR", "MEDIUM", "SHORT", "FULL"})
 
 -- Read through pcall and clamped, because these are consulted from inside
 -- the render path: a setting that could throw there would take the frame

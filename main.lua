@@ -3,7 +3,7 @@
 -- selector/host and all Stadium model presentation when it is installed.
 
 local mod = ...
-mod.exports.version = "2.0.2"
+mod.exports.version = "2.0.3"
 
 local V = { mod = mod, path = mod.path }
 local modules, dataFiles = {}, {}
@@ -48,7 +48,10 @@ local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
 local DayNight = V.require("DayNight")
 local DayTint = V.require("DayTint")
+--local Light = V.require("Light")
+local RayFX = V.require("RayFX")
 local Water = V.require("Water")
+local Weather = V.require("Weather")
 local Shadows = V.require("Shadows")
 local AntiAlias = V.require("AntiAlias")
 local FirstPerson = V.require("FirstPerson")
@@ -88,6 +91,7 @@ mod.content.render_pipelines:register("voxel", {
     Voxel.update(dt, level)
     FirstPerson.update(dt)
     DayNight.update(dt)
+    Weather.update(dt)
     voidFill.check()
     if not Voxel.active() then return end
     local Game = require("src.core.Game")
@@ -118,6 +122,7 @@ mod.content.render_pipelines:register("voxel", {
     if Voxel3D.beginOverlay() then
       ctx.drawFx(function(wx, wy) return Voxel3D.project(wx, 0, wy) end,
         ctx.scale * AntiAlias.factor())
+      Weather.draw(Voxel3D.project, ctx.scale, sw, sh)
       Voxel3D.endOverlay()
     end
     return AntiAlias.resolve(canvas, sw, sh, "world")
@@ -127,6 +132,7 @@ mod.content.render_pipelines:register("voxel", {
     AntiAlias.invalidate()
     VoxelLoadingVeil.invalidate()
     ChunkMesher.invalidate()
+    Water.dropGPU()
     V.log:event("graphics", "invalidated", {})
   end,
 })
@@ -194,12 +200,39 @@ end
 local SETTINGS = {
   { VoxelGrid.setting, "One-pixel wireframe along every voxel edge." },
   { WorldCurve.setting, "Bend the world down over the horizon." },
-  { DayNight.setting, "Choose DAY, NIGHT, DUSK, DAWN, CYCLE, or clock-synced lighting." },
+  { DayNight.setting,
+    "What time it is outdoors: pin the sky to DAY, NIGHT, DUSK or DAWN, "
+    .. "let CYCLE run it -- ten minutes of sun, ten of moon, with the "
+    .. "shadows, the sky and the light following -- or SYNC it to the "
+    .. "clock on the wall, so Kanto's evening falls when yours does." },
+  -- Night depth and street lamps travel together in the options list: DEEP
+  -- only reads as a city night when something is lit on the street, and
+  -- LAMPS only matter once the sky is dark enough to need them.
+  { DayNight.darkSetting,
+    "How dark night is. DEEP takes a large step down from the soft blue "
+    .. "night so a town reads as lit windows and street lamps in real "
+    .. "darkness -- the sky and the world's tint both drop. SOFT is the "
+    .. "older, more readable blue night. Windows and street-lamp heads "
+    .. "are exempt either way: they burn after the hour's multiply.",
+    full = true },
   { Water.setting, "Reflections on water: FULL, SKY, or OFF." },
   { Shadows.setting, "Enable voxel-world cast shadows.", full = true },
   { AntiAlias.setting, "Supersample the voxel world for smoother geometry edges.", full = true },
   { Quality.setting, "Choose the voxel render resolution scale.", full = true },
   { Quality.renderDistanceSetting, "Choose the render distance.", full = true },
+  -- `full = true` for the same reason the two performance rows above have
+  -- it: this is the row that costs the most per rung, so FULL -- the
+  -- heaviest thing the mod does -- is exactly when it has to be reachable.
+  { RayFX.setting,
+    "Fake ray tracing: everything here is a ray marched across the depth "
+    .. "buffer the 3D pass already filled, so it costs fetches rather than "
+    .. "geometry. AO darkens the corners the sky cannot reach -- doorways, "
+    .. "the foot of a wall, the gap between two trees. RT adds real "
+    .. "reflections on the water: the ray leaves along the swell's own "
+    .. "normal and lands on whatever is actually standing there, so the "
+    .. "reflection travels with the crest carrying it. MAX adds light "
+    .. "shafts through the gaps, marched toward the sun's own disc.",
+    full = true },
  -- { Quality.shadowSetting, "Choose full, low-cost, or disabled cast shadows.", full = true },
   { BackSpritesSetting,
     "Keep your own Pokemon on the battle menu, seen from behind in its original slot, while the foe remains a world card.",
@@ -472,6 +505,13 @@ end)
 mod.events:on("battle.ended", function()
   if not bridge.registered then standaloneBattle.finish("battle.ended") end
 end)
+
+local draw_inner = love.draw
+function love.draw()
+  draw_inner()
+  love.graphics.setColor( 255, 255, 255, 1 )
+  love.graphics.print("Current FPS: "..tostring(love.timer.getFPS( )), 10, 10)
+end
 
 mod.exports.voxelArenaProvider = arenaProvider
 mod.exports.voxelCardProvider = cardProvider

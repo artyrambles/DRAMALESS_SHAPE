@@ -33,6 +33,11 @@ local V = ...
 local Assets = require("src.render.Assets")
 local TileRenderer = require("src.render.TileRenderer")
 local PaletteFX = require("src.render.PaletteFX")
+-- re-added from TERRARIUM
+-- Water.tileRoll decides whether the hshift water roll runs under swell
+-- (see Water.lua). Required here rather than pushed in: this file already
+-- owns the animation clock, and Water has no reverse dependency on us.
+local Water = V.require("Water")
 
 local TerrainAtlas = {}
 
@@ -534,12 +539,20 @@ end
 -- work THIS time and might next. The caller latches the first and retries
 -- the second (see attemptFailed).
 local function newEntry(map, base, baked)
+  -- local tileset = map.tileset
+  -- local specs = specsFor(tileset)
+  -- if not specs then return false end        -- nothing on this tileset animates
+  -- if not (love.image and love.image.newImageData
+  --         and love.graphics and love.graphics.newImage) then
+  --   return false         -- no pixel/texture access on this machine
+
+  -- re-added from TERRARIUM
   local tileset = map.tileset
   local specs = specsFor(tileset)
   if not specs then return false end        -- nothing on this tileset animates
   if not (love.image and love.image.newImageData
-          and love.graphics and love.graphics.newImage) then
-    return false                            -- no pixel/texture access on this machine
+          and base.replacePixels) then
+    return false   
   end
   -- the pixels the atlas texture was built from: our own SGB bake when we
   -- made one, else whatever the engine's renderer is drawing with. A
@@ -649,21 +662,64 @@ function TerrainAtlas.animate(map, colors, base, baked)
   if not entry then return nil end
 
   local frame = animFrame()
-  local step = stateKey(entry, frame)
+  -- re-added from TERRARIUM
+  -- Under a non-FLAT swell the water tile roll is held still (Water.tileRoll);
+  -- flowers (kind == "frames") keep advancing. The high bit folds the roll
+  -- state into `step` so flipping FLAT <-> CALM forces one clean repatch
+  -- back to offset 0 rather than leaving a stale shifted slot on the atlas.
+  local roll = true
+  do
+    local ok, r = pcall(Water.tileRoll)
+    if ok and r == false then roll = false end
+  end
+  -- one number for the whole entry: every spec's own step, folded together,
+  -- so a repatch happens when ANY of them turns over
+  local step = roll and 0 or 0x40000000
+  for i, spec in ipairs(entry.specs) do
+    local n = spec.kind == "hshift" and #spec.offsets or #spec.sequence
+    local st = math.floor(frame / (spec.period or 20)) % n
+    if spec.kind == "hshift" and not roll then st = 0 end
+    step = step + st * (16 ^ i)
+  end
   if step ~= entry.step then
     entry.step = step
-    entry.image = entry.frames[step]
-    if not entry.image then
-      -- A custom animation exceeded/escaped the prebuilt cycle. Prefer the
-      -- static atlas to a runtime upload hitch.
+    local ok = pcall(function()
+      for _, spec in ipairs(entry.specs) do
+        local n = spec.kind == "hshift" and #spec.offsets or #spec.sequence
+        local st = math.floor(frame / (spec.period or 20)) % n
+        if spec.kind == "hshift" and not roll then st = 0 end
+        patch(entry.data, entry, spec, st)
+      end
+      entry.image:replacePixels(entry.data)
+    end)
+    if not ok then
+      -- drop the entry rather than condemning the key: the next frame
+      -- rebuilds and tries again, and attemptFailed gives up eventually
+      animated[key] = attemptFailed(key)
       return nil
     end
   end
-  -- Only a frame that got all the way here counts as healthy. A partial or
-  -- failed prebuild keeps its retry budget until an immutable state can
-  -- actually be selected.
+  -- Only a frame that got all the way here counts as healthy. Clearing the
+  -- budget on a successful BUILD instead would never let it run out: an
+  -- entry that builds fine and fails on upload would rebuild every frame,
+  -- forever, which is worse than either animating or giving up.
   if attempts[key] then attempts[key] = nil end
   return entry.image
+  -- local step = stateKey(entry, frame)
+  -- if step ~= entry.step then
+  --   entry.step = step
+  --   entry.image = entry.frames[step]
+  --   if not entry.image then
+  --     -- A custom animation exceeded/escaped the prebuilt cycle. Prefer the
+  --     -- static atlas to a runtime upload hitch.
+  --     return nil
+  --   end
+  -- end
+  -- -- Only a frame that got all the way here counts as healthy. A partial or
+  -- -- failed prebuild keeps its retry budget until an immutable state can
+  -- -- actually be selected.
+  -- if attempts[key] then attempts[key] = nil end
+  -- return entry.image
 end
 
 function TerrainAtlas.forMap(map, colors)
@@ -725,12 +781,25 @@ function TerrainAtlas.setLive(live)
   end
 end
 
+-- function TerrainAtlas.invalidate()
+--   cache = {}
+--   cacheData = {}
+--   attempts = {}
+--   for _, entry in pairs(animated) do
+--     releaseAnimatedEntry(entry)
+--   end
+--   animated = {}
+-- end
+
+-- re-added from TERRARIUM
 function TerrainAtlas.invalidate()
   cache = {}
   cacheData = {}
   attempts = {}
   for _, entry in pairs(animated) do
-    releaseAnimatedEntry(entry)
+    if entry and entry.image and entry.image.release then
+      pcall(entry.image.release, entry.image)
+    end
   end
   animated = {}
 end

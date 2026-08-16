@@ -11,6 +11,8 @@
   code, see further above for a full list of their work.
 - **[StadiumFX](https://github.com/anxiousintrovert/StadiumBattleFX)**
   Compatibility code was provided by its creator and added to this fork.
+- **[stavrozo](https://github.com/stavrozo/gen1recomp-android-sandbox-patches/blob/main/patches/dramaless-shape/android-sandbox.patch)**
+  Contributed a fix for the render distance function mixing absolute and relative coordinates by accident.
 - **Various Contributors** as listed on the CHANGELOGs.
 - **Nintendo, Creatures Inc. and GAME FREAK Inc.**: for the game. It is
   theirs. This is only a coat of paint on a program that loads it.

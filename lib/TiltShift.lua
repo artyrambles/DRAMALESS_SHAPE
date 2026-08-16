@@ -27,6 +27,7 @@
 
 local V = ...
 local TiltShift = {}
+local Quality = V.require("Quality")
 
 TiltShift.level = 0
 TiltShift.LABELS = { "OFF", "1", "2", "3" }
@@ -77,6 +78,7 @@ local SHADER = [[
 
 local shader = nil            -- nil = untried, false = unavailable
 local ping, pong, cw, ch = nil, nil, 0, 0
+local out, ow, oh = nil, 0, 0
 
 local function getShader()
   if shader == nil then
@@ -99,6 +101,15 @@ local function getCanvases(w, h)
     ping, pong, cw, ch = a, b, w, h
   end
   return ping, pong
+end
+
+local function getOut(w, h)
+  if out and ow == w and oh == h then return out end
+  local ok, c = pcall(love.graphics.newCanvas, w, h)
+  if not ok then return nil end
+  c:setFilter("nearest", "nearest")
+  out, ow, oh = c, w, h
+  return out
 end
 
 function TiltShift.setLevel(level)
@@ -136,10 +147,22 @@ function TiltShift.apply(canvas)
   local sh = getShader()
   if not sh then return canvas end
   local w, h = canvas:getDimensions()
-  local a, b = getCanvases(w, h)
-  if not a then return canvas end
 
-  local spacing = math.max(0.75, math.min(3, h * preset.spacing))
+  local div = Quality.scale()
+  local bw = math.max(1, math.floor(w / div))
+  local bh = math.max(1, math.floor(h / div))
+
+  local a, b = getCanvases(bw, bh)
+  if not a then return canvas end
+  local final = (bw ~= w or bh ~= h) and getOut(w, h) or nil
+  if final == nil and (bw ~= w or bh ~= h) then return canvas end
+
+  -- Worked out against the PANEL and then converted into blur-canvas
+  -- texels, rather than worked out against the blur canvas directly. Same
+  -- number of frame-heights of reach either way, but this way turning RES
+  -- down does not also turn the blur up: a performance row that quietly
+  -- restyled the picture would be a bad row.
+  local spacing = math.max(0.75, math.min(3, h * preset.spacing)) / div
   local prevBlend, prevAlpha = love.graphics.getBlendMode()
 
   -- the voxel canvas filters nearest for its 1:1 blit; the blur taps need

@@ -85,6 +85,58 @@ function Mat4.ortho(l, r, b, t, n, f)
            0, 0, 0, 1 }
 end
 
+-- re-addded from TERRARIUM
+-- The inverse of `m`, or nil when it has none.
+--
+-- Gauss-Jordan on the augmented [M | I] rather than the cofactor formula:
+-- this runs once per frame against a matrix that is already built, so the
+-- fifty microseconds the elimination costs over the closed form buy nothing
+-- worth having -- and a closed-form 4x4 adjugate is sixteen expressions
+-- nobody can check by reading, in a file whose whole layout convention
+-- (row-major, translation in the fourth column) is the sort of thing a
+-- transcribed formula gets silently backwards.
+--
+-- Partial pivoting, because the camera matrix has a zero in [1][1] at no
+-- pitch worth naming but a projection row that is all zeros but one, and a
+-- naive elimination divides by whatever happens to be on the diagonal.
+function Mat4.invert(m)
+  local a = {}
+  for r = 0, 3 do
+    local row = {}
+    for c = 1, 4 do row[c] = m[r * 4 + c] end
+    for c = 1, 4 do row[4 + c] = (c == r + 1) and 1 or 0 end
+    a[r + 1] = row
+  end
+
+  for i = 1, 4 do
+    local p, best = i, math.abs(a[i][i])
+    for r = i + 1, 4 do
+      local v = math.abs(a[r][i])
+      if v > best then p, best = r, v end
+    end
+    -- singular: the caller drops whatever it wanted the inverse for rather
+    -- than dividing by a rounding error
+    if best < 1e-12 then return nil end
+    a[i], a[p] = a[p], a[i]
+    local piv = a[i][i]
+    for c = 1, 8 do a[i][c] = a[i][c] / piv end
+    for r = 1, 4 do
+      if r ~= i then
+        local f = a[r][i]
+        if f ~= 0 then
+          for c = 1, 8 do a[r][c] = a[r][c] - f * a[i][c] end
+        end
+      end
+    end
+  end
+
+  local o = {}
+  for r = 1, 4 do
+    for c = 1, 4 do o[(r - 1) * 4 + c] = a[r][4 + c] end
+  end
+  return o
+end
+
 -- Right-handed look-at. eye/target/up are {x, y, z}.
 function Mat4.lookAt(eye, target, up)
   local function sub(a, b) return { a[1] - b[1], a[2] - b[2], a[3] - b[3] } end

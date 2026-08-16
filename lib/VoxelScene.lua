@@ -91,23 +91,34 @@ end
 local function withinRenderDistance(subject)
   local state = overworld()
   local ow_player = state.player
-  local me = {px = ow_player.cellX, py = ow_player.cellY}
+  -- fix/patch by stavrozo!
+  -- `subject.px/py` are world-pixel coordinates. Player.cellX/cellY are
+  -- movement-grid cells (16 px each), so comparing them directly makes
+  -- render-distance culling depend on absolute map position: nearby NPCs
+  -- and follower Pokemon can vanish after crossing an X/Y threshold.
+  -- Use the engine's authoritative pixel position, with a cell fallback
+  -- for compatibility with custom player objects.
+  local me = {
+    px = tonumber(ow_player.px) or ((tonumber(ow_player.cellX) or 0) * 16),
+    py = tonumber(ow_player.py) or ((tonumber(ow_player.cellY) or 0) * 16),
+  }
+  -- end of fix
   if not (subject.isPlayer) then
     local mx = me.px
     local my = me.py
     local dx = subject.px - mx
     local dy = subject.py - my
-    local mag = math.sqrt(dx * dx + dy * dy) / 16
-   -- V.mod.log:info(tostring(dx).. ", ".. tostring(dy) .. " = " .. tostring(mag))
+    local mag = math.sqrt(dx * dx + dy * dy) / 8 -- magic number go brrrrrr
+  --  V.mod.log:info(tostring(dx).. ", ".. tostring(dy) .. " = " .. tostring(mag))
     if mag <= Quality.renderDistance() then
-     -- V.mod.log:info("passes render distance check.")
+    --  V.mod.log:info("passes render distance check.")
       return true
     end
   else
  --   V.mod.log:info("is player.")
     return true
   end
- -- V.mod.log:info("too far away.")
+  --V.mod.log:info("too far away.")
   return false
 end
 
@@ -243,6 +254,11 @@ local function groundAt(map, cellX, cellY)
   -- warp fires as they step in -- lifting them onto the geometry read as
   -- climbing an invisible block
   if s.art == "stair" then return 0 end
+  -- re-added from TERRARIUM
+  -- Recessed water sits at TileShape.water (-2).  Callers that need the
+  -- LIVE surface (swell under a surfer / water roamer) ask Water.surfaceAt
+  -- with the entity's pixel position; this answer is only the still floor.
+  if s.h and s.h < 0 then return s.h end
   return s.h > 0 and s.h or 0
 end
 
@@ -304,6 +320,7 @@ end
 -- beginShadows, which supplies the translucent black; the texture is only
 -- consulted for its alpha, so no palette work is needed.
 local function drawShadow(sprite, px, py, facing, phase, flip, gh, lift)
+  if not withinRenderDistance({px = px, py = py, isPlayer = false}) then return end
   local def = sprite.def
   local frame, mirror = frameFor(def, facing, phase, flip)
   local mesh = SpriteBillboards.shadowQuad(def, frame)
@@ -381,7 +398,9 @@ end
 -- Every figure on `map`, drawn with `draw(mesh, model, caster)`.
 local function eachFigure(map, offX, offZ, draw)
   for _, f in ipairs(ChunkMesher.figures(map) or {}) do
-    draw(f.mesh, figureMatrix(f, offX, offZ), figureCaster(f, offX, offZ))
+    if withinRenderDistance({px = f.x, py = f.y, isPlayer = false}) then
+      draw(f.mesh, figureMatrix(f, offX, offZ), figureCaster(f, offX, offZ))
+    end
   end
 end
 
@@ -395,7 +414,7 @@ end
 -- where the 2D path could only slide the sprite north).
 local function drawEntity(sprite, px, py, facing, phase, flip, gh, colors,
                           lift)
-
+  if not withinRenderDistance({px = px, py = py, isPlayer = false}) then return false end
   local def = sprite.def
   local tex = sprite:resolveImage()
   if colors and not def.trueColor then
@@ -420,7 +439,7 @@ local function drawEntity(sprite, px, py, facing, phase, flip, gh, colors,
   -- (castShadows draws this mesh through ShadowMap.snug) -- is where each
   -- vertex asks whether the light reached it; see ShadowMap.snug for why
   -- the lookup must match the stored transform to the letter
-  Voxel3D.draw(mesh, tex, billboardMatrix(px, py, y, mirror),
+    Voxel3D.draw(mesh, tex, billboardMatrix(px, py, y, mirror),
                billboardPull(),
                ShadowMap.snug(Voxel3D.casterMatrix(px, py, y, mirror)))
   return true
@@ -634,17 +653,17 @@ VoxelScene.GLINT_IN = 0.12      -- strength gained per moving frame
 VoxelScene.GLINT_OUT = 0.08     -- and lost per resting frame
 
 function VoxelScene.glintStep(g, cx, cy)
-  local dist = 0
-  if g.x then
-    dist = math.abs(cx - g.x) + math.abs(cy - g.y)
-  end
-  g.x, g.y = cx, cy
-  g.phase = ((g.phase or 0) + dist * VoxelScene.GLINT_RATE) % (2 * math.pi)
-  if dist > 0.05 then
-    g.amp = math.min(1, (g.amp or 0) + VoxelScene.GLINT_IN)
-  else
-    g.amp = math.max(0, (g.amp or 0) - VoxelScene.GLINT_OUT)
-  end
+  --local dist = 0
+  -- if g.x then
+  --   dist = math.abs(cx - g.x) + math.abs(cy - g.y)
+  -- end
+  -- g.x, g.y = cx, cy
+  -- g.phase = ((g.phase or 0) + dist * VoxelScene.GLINT_RATE) % (2 * math.pi)
+  -- if dist > 0.05 then
+  --   g.amp = math.min(1, (g.amp or 0) + VoxelScene.GLINT_IN)
+  -- else
+  --   g.amp = math.max(0, (g.amp or 0) - VoxelScene.GLINT_OUT)
+  -- end
   return g
 end
 
@@ -687,9 +706,8 @@ local function drawCast(state, posed, atlasFor)
   -- by this same function -- agrees with the frame to the pixel.
   local hideMe = FirstPerson.hidePlayer()
   for _, p in ipairs(posed) do
-    --if not withinRenderDistance(p, nil) then return end -- added in 2.0.0
     if not (p.isPlayer and hideMe) then
-      if withinRenderDistance(p) then
+      if withinRenderDistance(p) then -- added in 2.0.0
         drawEntity(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
                  p.colors, p.lift)
       end
@@ -706,9 +724,12 @@ local function drawCast(state, posed, atlasFor)
                  ShadowMap.snug(caster))
   end)
   for _, nb in ipairs(state.neighbors or {}) do
+    
     eachFigure(nb.map, nb.ox, nb.oy, function(mesh, model, caster)
-      Voxel3D.draw(mesh, atlasFor(nb.map), model, figPull,
-                   ShadowMap.snug(caster))
+        --if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then
+          Voxel3D.draw(mesh, atlasFor(nb.map), model, figPull,
+                    ShadowMap.snug(caster))
+       -- end
     end)
   end
   -- and the seams are back on for the terrain art that follows: grass and
@@ -716,137 +737,137 @@ local function drawCast(state, posed, atlasFor)
   Voxel3D.seams(true)
 end
 
--- ------- the water pass
---
--- Between the terrain and everything that stands on it, because water is a
--- MIRROR and a mirror can only reflect what is already down: the ground, the
--- shoreline, the trees and buildings behind it, and the sky the frame opened
--- with.
---
--- THE CAST IS THE AWKWARD ONE, and it is settled by drawing it twice. Gen 1
--- draws people over the world and water is world, so a surfing player has to
--- composite OVER the water they are sitting on -- which puts them after it,
--- and a reflection can only hold what came before it. So `cast` is painted
--- into the reflection copy alone (Voxel3D.beginWater), where it is in the
--- picture the water reflects and not yet in the picture the water is drawn
--- into. Both draws go through drawCast, so they cannot come out different.
---
--- The ray march finds them the honest way round: a sprite is not in the
--- DEPTH buffer at that point, so a ray aimed at one passes through to the
--- terrain standing behind it and reads the copy there -- where the sprite is
--- already painted. The reflection lands a hair off the sprite's own depth
--- and exactly on its colour, which at a lake's worth of ripple is the same
--- picture.
---
--- `draws` is a list of { mesh, texture, model }. Nothing is a special case:
--- with the row OFF, no depth texture to read, or a shader that would not
--- build, the same meshes go through the ordinary scene shader and come out
--- as the flat animated water this mode always drew.
--- The overworld's alone: the staged battle draws its water plain, always --
--- its placed camera reads this pass wrong, and a stage set wants painted
--- water anyway (see BattleScene, where the choice is argued).
--- ------- and why the flat draw happens FIRST while the world is curved
---
--- The reflective pass writes no depth -- it cannot, the depth canvas is
--- detached for the length of it so the shader can READ it -- and it does its
--- own depth test against that texture instead. That test asks whether
--- something opaque is in front, and it answers correctly for every case but
--- one: WATER IN FRONT OF WATER. Nothing puts water in the depth buffer, so
--- no lake can hide another, and the pass simply paints them in mesh order.
---
--- On a flat world that never matters: every surface lies in the one plane
--- at its own recessed height, and a farther sheet always lands farther down
--- the screen. THE WORLD CURVE ENDS THAT. The bend drops the world by the
--- square of its distance, so the far side of the map swings down and back
--- up into the near field of view -- and a sheet of sea a hundred and fifty
--- tiles away, drawn later in the same mesh, paints straight over the pond
--- at the player's feet. Not a reflection of the far shore: the far shore
--- itself, rasterised on top of the water in front of you.
---
--- So WHILE THE CURVE IS ON, the meshes go down flat first, through the
--- ordinary scene shader with depth writes on, and the reflective pass draws
--- over the top of what survived: the depth buffer now holds the water
--- surface, so the pass's own test throws the far sheet away, and the
--- reflection COPY holds it too, so a ray grazing another part of the lake
--- reads water rather than the void behind it.
---
--- With the curve OFF the prepass is not just unnecessary, it is a LIABILITY,
--- and it stays off -- the reflective pass tests only against terrain, as it
--- always did. Painting the surface into the depth texture turns the pass's
--- test into a comparison of the surface against ITSELF, which asks the two
--- rasterisations to agree to within interpolation error -- and on mobile
--- GPUs they don't reliably (that fight is what put the Android port back on
--- flat water). Confined to the curve there is no regression to reach: the
--- flat world never had the far-shore bug in the first place.
-function VoxelScene.drawWater(draws, cast)
-  -- prepass only under the bend; see the header
-  local curved = (Voxel3D.curveK or 0) > 0
-  if curved then
-    for _, d in ipairs(draws) do
-      Voxel3D.draw(d[1], d[2], d[3])
-    end
-  end
-  local plain = not curved
-  local reflected = false
-  local function waterContext(reflect, depth)
-    local w, h = Voxel3D.size()
-    return {
-      reflect = reflect, depth = depth,
-      vp = Voxel3D.vp, eye = Voxel3D.eye, curve = { Voxel3D.curveX or 0,
-                                                    Voxel3D.curveZ or 0,
-                                                    Voxel3D.curveK or 0 },
-      screen = { w, h }, cell = Voxel3D.cell, fov = Voxel3D.fovY,
-      skyEdge = Voxel3D.skyEdge, grid = VoxelGrid.enabled(),
-      lookFlat = Voxel3D.lookFlat, descent = Voxel3D.descent,
-    }
-  end
-  -- Use the proven shared reflection pass whenever the driver provides its
-  -- targets. SKY sends rays=0 through this same shader; FULL sends rays=1.
-  -- The lightweight shader below is only the fallback when this cannot start.
-  if Water.enabled() and Voxel3D.depthReadable() then
-    local mirror, depth = Voxel3D.beginWater(cast)
-    local ok = mirror and depth
-               and Water.begin(waterContext(mirror, depth), false)
-    if ok then
-      for _, d in ipairs(draws) do
-        Water.draw(d[1], d[2], d[3])
-      end
-      Water.finish()
-      reflected = true
-      plain = false
-    end
-    -- Unconditionally, and OUTSIDE the success branch: beginWater unbinds
-    -- the shader and the depth mode BEFORE it can discover it cannot go on,
-    -- so a frame that bails halfway through has to be put back together
-    -- exactly like one that succeeded -- otherwise every pass after it runs
-    -- with no shader and no depth test.
-    Voxel3D.endWater()
-  end
-  -- SKY does not need the frame copy or readable depth at all. It is also
-  -- FULL's safe fallback on mobile drivers that refuse either heavy target or
-  -- the screen-space shader: a reflected sky is preferable to flat water.
-  if Water.enabled() and not reflected then
-    local ok = Water.begin(waterContext(nil, nil), true)
-    if ok then
-      for _, d in ipairs(draws) do
-        Water.draw(d[1], d[2], d[3])
-      end
-      Water.finish()
-      -- This path never called beginWater, but the following world passes
-      -- still need the scene shader restored after the sky-only shader.
-      Voxel3D.endWater()
-      plain = false
-    end
-  end
-  -- the fallback flat draw -- unless the curve's prepass already put the
-  -- same meshes down, in which case a bailed frame is already whole
-  if plain then
-    for _, d in ipairs(draws) do
+-- -- ------- the water pass
+-- --
+-- -- Between the terrain and everything that stands on it, because water is a
+-- -- MIRROR and a mirror can only reflect what is already down: the ground, the
+-- -- shoreline, the trees and buildings behind it, and the sky the frame opened
+-- -- with.
+-- --
+-- -- THE CAST IS THE AWKWARD ONE, and it is settled by drawing it twice. Gen 1
+-- -- draws people over the world and water is world, so a surfing player has to
+-- -- composite OVER the water they are sitting on -- which puts them after it,
+-- -- and a reflection can only hold what came before it. So `cast` is painted
+-- -- into the reflection copy alone (Voxel3D.beginWater), where it is in the
+-- -- picture the water reflects and not yet in the picture the water is drawn
+-- -- into. Both draws go through drawCast, so they cannot come out different.
+-- --
+-- -- The ray march finds them the honest way round: a sprite is not in the
+-- -- DEPTH buffer at that point, so a ray aimed at one passes through to the
+-- -- terrain standing behind it and reads the copy there -- where the sprite is
+-- -- already painted. The reflection lands a hair off the sprite's own depth
+-- -- and exactly on its colour, which at a lake's worth of ripple is the same
+-- -- picture.
+-- --
+-- -- `draws` is a list of { mesh, texture, model }. Nothing is a special case:
+-- -- with the row OFF, no depth texture to read, or a shader that would not
+-- -- build, the same meshes go through the ordinary scene shader and come out
+-- -- as the flat animated water this mode always drew.
+-- -- The overworld's alone: the staged battle draws its water plain, always --
+-- -- its placed camera reads this pass wrong, and a stage set wants painted
+-- -- water anyway (see BattleScene, where the choice is argued).
+-- -- ------- and why the flat draw happens FIRST while the world is curved
+-- --
+-- -- The reflective pass writes no depth -- it cannot, the depth canvas is
+-- -- detached for the length of it so the shader can READ it -- and it does its
+-- -- own depth test against that texture instead. That test asks whether
+-- -- something opaque is in front, and it answers correctly for every case but
+-- -- one: WATER IN FRONT OF WATER. Nothing puts water in the depth buffer, so
+-- -- no lake can hide another, and the pass simply paints them in mesh order.
+-- --
+-- -- On a flat world that never matters: every surface lies in the one plane
+-- -- at its own recessed height, and a farther sheet always lands farther down
+-- -- the screen. THE WORLD CURVE ENDS THAT. The bend drops the world by the
+-- -- square of its distance, so the far side of the map swings down and back
+-- -- up into the near field of view -- and a sheet of sea a hundred and fifty
+-- -- tiles away, drawn later in the same mesh, paints straight over the pond
+-- -- at the player's feet. Not a reflection of the far shore: the far shore
+-- -- itself, rasterised on top of the water in front of you.
+-- --
+-- -- So WHILE THE CURVE IS ON, the meshes go down flat first, through the
+-- -- ordinary scene shader with depth writes on, and the reflective pass draws
+-- -- over the top of what survived: the depth buffer now holds the water
+-- -- surface, so the pass's own test throws the far sheet away, and the
+-- -- reflection COPY holds it too, so a ray grazing another part of the lake
+-- -- reads water rather than the void behind it.
+-- --
+-- -- With the curve OFF the prepass is not just unnecessary, it is a LIABILITY,
+-- -- and it stays off -- the reflective pass tests only against terrain, as it
+-- -- always did. Painting the surface into the depth texture turns the pass's
+-- -- test into a comparison of the surface against ITSELF, which asks the two
+-- -- rasterisations to agree to within interpolation error -- and on mobile
+-- -- GPUs they don't reliably (that fight is what put the Android port back on
+-- -- flat water). Confined to the curve there is no regression to reach: the
+-- -- flat world never had the far-shore bug in the first place.
+-- function VoxelScene.drawWater(draws, cast)
+--   -- prepass only under the bend; see the header
+--   local curved = (Voxel3D.curveK or 0) > 0
+--   if curved then
+--     for _, d in ipairs(draws) do
+--       Voxel3D.draw(d[1], d[2], d[3])
+--     end
+--   end
+--   local plain = not curved
+--   local reflected = false
+--   local function waterContext(reflect, depth)
+--     local w, h = Voxel3D.size()
+--     return {
+--       reflect = reflect, depth = depth,
+--       vp = Voxel3D.vp, eye = Voxel3D.eye, curve = { Voxel3D.curveX or 0,
+--                                                     Voxel3D.curveZ or 0,
+--                                                     Voxel3D.curveK or 0 },
+--       screen = { w, h }, cell = Voxel3D.cell, fov = Voxel3D.fovY,
+--       skyEdge = Voxel3D.skyEdge, grid = VoxelGrid.enabled(),
+--       lookFlat = Voxel3D.lookFlat, descent = Voxel3D.descent,
+--     }
+--   end
+--   -- Use the proven shared reflection pass whenever the driver provides its
+--   -- targets. SKY sends rays=0 through this same shader; FULL sends rays=1.
+--   -- The lightweight shader below is only the fallback when this cannot start.
+--   if Water.enabled() and Voxel3D.depthReadable() then
+--     local mirror, depth = Voxel3D.beginWater(cast)
+--     local ok = mirror and depth
+--                and Water.begin(waterContext(mirror, depth), false)
+--     if ok then
+--       for _, d in ipairs(draws) do
+--         Water.draw(d[1], d[2], d[3])
+--       end
+--       Water.finish()
+--       reflected = true
+--       plain = false
+--     end
+--     -- Unconditionally, and OUTSIDE the success branch: beginWater unbinds
+--     -- the shader and the depth mode BEFORE it can discover it cannot go on,
+--     -- so a frame that bails halfway through has to be put back together
+--     -- exactly like one that succeeded -- otherwise every pass after it runs
+--     -- with no shader and no depth test.
+--     Voxel3D.endWater()
+--   end
+--   -- SKY does not need the frame copy or readable depth at all. It is also
+--   -- FULL's safe fallback on mobile drivers that refuse either heavy target or
+--   -- the screen-space shader: a reflected sky is preferable to flat water.
+--   if Water.enabled() and not reflected then
+--     local ok = Water.begin(waterContext(nil, nil), true)
+--     if ok then
+--       for _, d in ipairs(draws) do
+--         Water.draw(d[1], d[2], d[3])
+--       end
+--       Water.finish()
+--       -- This path never called beginWater, but the following world passes
+--       -- still need the scene shader restored after the sky-only shader.
+--       Voxel3D.endWater()
+--       plain = false
+--     end
+--   end
+--   -- the fallback flat draw -- unless the curve's prepass already put the
+--   -- same meshes down, in which case a bailed frame is already whole
+--   if plain then
+--     for _, d in ipairs(draws) do
 
-      Voxel3D.draw(d[1], d[2], d[3])
-    end
-  end
-end
+--       Voxel3D.draw(d[1], d[2], d[3])
+--     end
+--   end
+-- end
 
 -- A stamp of everything the sun pass depends on. Nothing in it moving
 -- means the shadow map it produced last frame is still exactly right, and
@@ -950,6 +971,7 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
     end)
   end
   for _, p in ipairs(posed) do
+    --if not withinRenderDistance({px = p.px, py = p.py, isPlayer = false}) then return false end
     local def = p.sprite.def
     -- viewFacing, exactly as the camera draw picks it (see viewFacing for
     -- why the two passes must agree): in first person the sun's card
@@ -1118,31 +1140,33 @@ end
   local waterDraws = VoxelScene._waterDrawBuf
   local waterN = 0
 
-  local function addWaterDraw(mesh, texture, model)
-    waterN = waterN + 1
-    local d = waterDraws[waterN]
-    if not d then d = {}; waterDraws[waterN] = d end
-      d[1], d[2], d[3] = mesh, texture, model
-    end
+  -- local function addWaterDraw(mesh, texture, model)
+  --   waterN = waterN + 1
+  --   local d = waterDraws[waterN]
+  --   if not d then d = {}; waterDraws[waterN] = d end
+  --     d[1], d[2], d[3] = mesh, texture, model
+  -- end
 
-    if water then
-      addWaterDraw(water, atlasFor(state.map), nil)
-    end
-    for i, nb in ipairs(state.neighbors or {}) do
-      if nbWater and nbWater[i] then
-        addWaterDraw(nbWater[i], atlasFor(nb.map),
-                    Mat4.translate(nb.ox, 0, nb.oy))
-      end
-    end
-    for i = waterN + 1, #waterDraws do waterDraws[i] = nil end
-    -- the cast goes into the reflection copy only -- see drawWater for why it
-    -- cannot be composited yet and why it is drawn through the same function
-    -- the real pass below uses
-    if #waterDraws > 0 then
-      VoxelScene.drawWater(waterDraws, function()
-        drawCast(state, posed, atlasFor)
-      end)
-    end
+  -- if water then
+  --   addWaterDraw(water, atlasFor(state.map), nil)
+  -- end
+  -- for i, nb in ipairs(state.neighbors or {}) do
+  --   if nbWater and nbWater[i] then
+  --     if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then
+  --       addWaterDraw(nbWater[i], atlasFor(nb.map),
+  --                 Mat4.translate(nb.ox, 0, nb.oy))
+  --     end
+  --   end
+  -- end
+  -- for i = waterN + 1, #waterDraws do waterDraws[i] = nil end
+  -- -- the cast goes into the reflection copy only -- see drawWater for why it
+  -- -- cannot be composited yet and why it is drawn through the same function
+  -- -- the real pass below uses
+  -- if #waterDraws > 0 then
+  --   VoxelScene.drawWater(waterDraws, function()
+  --     drawCast(state, posed, atlasFor)
+  --   end)
+  -- end
 
 
   -- Sprite sheets from here to the figure pass: their texture coordinates
@@ -1210,7 +1234,7 @@ end
   -- buildings it genuinely stands behind (far deeper than the pull).
   local Voxel = V.require("VoxelState")
   local pull = VoxelScene.pull(math.max(Voxel.angle, 0.05))
-  Voxel3D.draw(ChunkMesher.grass(state.map), atlasFor(state.map), nil, pull)
+    Voxel3D.draw(ChunkMesher.grass(state.map), atlasFor(state.map), nil, pull)
   for _, nb in ipairs(state.neighbors or {}) do
     if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then
      Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
@@ -1230,8 +1254,10 @@ end
   local fpull = math.max(0, pull - 8 * math.sin(math.max(Voxel.angle, 0.05)))
   -- flowers are snugged casters too, so they read their own shadowing
   -- through the same snugged transform the sun stored them with
-  Voxel3D.draw(ChunkMesher.flowers(state.map), atlasFor(state.map), nil,
+  --if withinRenderDistance(posed) then
+    Voxel3D.draw(ChunkMesher.flowers(state.map), atlasFor(state.map), nil,
                fpull, ShadowMap.snug(nil))
+  --end
   for _, nb in ipairs(state.neighbors or {}) do
     if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then
       Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
