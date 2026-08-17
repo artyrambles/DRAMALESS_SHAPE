@@ -91,13 +91,22 @@ end
 local function withinRenderDistance(subject)
   local state = overworld()
   local ow_player = state.player
-  local me = {px = ow_player.cellX, py = ow_player.cellY}
+  -- `subject.px/py` are world-pixel coordinates. Player.cellX/cellY are
+  -- movement-grid cells (16 px each), so comparing them directly makes
+  -- render-distance culling depend on absolute map position: nearby NPCs
+  -- and follower Pokemon can vanish after crossing an X/Y threshold.
+  -- Use the engine's authoritative pixel position, with a cell fallback
+  -- for compatibility with custom player objects.
+  local me = {
+    px = tonumber(ow_player.px) or ((tonumber(ow_player.cellX) or 0) * 16),
+    py = tonumber(ow_player.py) or ((tonumber(ow_player.cellY) or 0) * 16),
+  }
   if not (subject.isPlayer) then
     local mx = me.px
     local my = me.py
     local dx = subject.px - mx
     local dy = subject.py - my
-    local mag = math.sqrt(dx * dx + dy * dy) / 16
+    local mag = math.sqrt(dx * dx + dy * dy) / 8
    -- V.mod.log:info(tostring(dx).. ", ".. tostring(dy) .. " = " .. tostring(mag))
     if mag <= Quality.renderDistance() then
      -- V.mod.log:info("passes render distance check.")
