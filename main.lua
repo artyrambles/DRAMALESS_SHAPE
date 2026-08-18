@@ -55,6 +55,7 @@ local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
 local CamControl = V.require("CamControl")
 local Quality = V.require("Quality")
+local WorldReach = V.require("WorldReach")
 local PoisonFlash = V.require("PoisonFlash")
 
 local applyFull
@@ -89,6 +90,8 @@ mod.content.render_pipelines:register("voxel", {
     FirstPerson.update(dt)
     DayNight.update(dt)
     voidFill.check()
+    -- ahead of the gate: leaving from first person must restore the reach
+    WorldReach.update()
     if not Voxel.active() then return end
     local Game = require("src.core.Game")
     local ow = Game and Game.overworld
@@ -199,7 +202,10 @@ local SETTINGS = {
   { Shadows.setting, "Enable voxel-world cast shadows.", full = true },
   { AntiAlias.setting, "Supersample the voxel world for smoother geometry edges.", full = true },
   { Quality.setting, "Choose the voxel render resolution scale.", full = true },
-  { Quality.renderDistanceSetting, "Choose the render distance.", full = true },
+  { Quality.renderDistanceSetting,
+    "Choose the render distance: how far off distant figures are drawn, and "
+    .. "how much of the surrounding world is loaded around you in first and "
+    .. "third person.", full = true },
  -- { Quality.shadowSetting, "Choose full, low-cost, or disabled cast shadows.", full = true },
   { BackSpritesSetting,
     "Keep your own Pokemon on the battle menu, seen from behind in its original slot, while the foe remains a world card.",
