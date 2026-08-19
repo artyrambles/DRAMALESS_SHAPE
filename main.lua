@@ -7,6 +7,7 @@ mod.exports.version = "2.0.3"
 
 local V = { mod = mod, path = mod.path }
 local modules, dataFiles = {}, {}
+local module_path = mod.path .. "/lib/"
 
 local function chunkFor(rel)
   local source = mod:read(rel)
@@ -22,6 +23,20 @@ function V.require(name)
   modules[name] = value
   return value
 end
+
+-- newly added in 2.0.3, replaces the previous way of loading the modules
+-- not ready yet, must test it first. the old function may be fine.
+-- function V.require(name)
+--   if modules[name] ~= nil then return modules[name] end
+--   local value = require(module_path .. name .. "lua")
+--   if value then
+--     modules[name] = value
+--     return value
+--   else
+--     mod.log:error("[DRAMALESS_SHAPE] Could not load a required module. Mod will not work.")
+--     return nil
+--   end
+-- end
 
 function V.data(name)
   if dataFiles[name] ~= nil then return dataFiles[name] end
@@ -477,3 +492,4 @@ mod.exports.voxelArenaProvider = arenaProvider
 mod.exports.voxelCardProvider = cardProvider
 mod.exports.voxel2DBattleHost = standaloneBattle
 mod.exports.lib = V
+mod.exports.module_path = module_path
