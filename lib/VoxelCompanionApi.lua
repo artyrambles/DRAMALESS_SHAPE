@@ -17,15 +17,30 @@ API.CAPABILITIES = {
   SHADOW_PASS = "shadow_pass",
   BATTLE_PASS = "battle_pass",
   INTEGRITY_STATUS = "integrity_status",
-  -- Optional facade declarations for adapters that negotiate them separately.
-  MATERIALS = "materials",
-  DRAW = "draw",
 }
--- Short aliases name the attach facades while retaining the wire capability
--- names used by KFP's host client.
+-- Short aliases name capability-backed attach facades. Materials and draw are
+-- normalized render services, not negotiated wire capabilities.
 API.CAPABILITIES.WORLD = API.CAPABILITIES.WORLD_SNAPSHOT
 API.CAPABILITIES.QUALITY = API.CAPABILITIES.QUALITY_TIER
 API.CAPABILITIES.INTEGRITY = API.CAPABILITIES.INTEGRITY_STATUS
+
+API.DRAW_SCHEMA_VERSION = 1
+API.DRAW_KINDS = {
+  MESH = "mesh",
+  INSTANCES = "instances",
+  BILLBOARDS = "billboards",
+}
+
+local STANDARD_CAPABILITY_SET = {
+  render_phases = true,
+  camera_delta = true,
+  terrain_patch = true,
+  world_snapshot = true,
+  quality_tier = true,
+  shadow_pass = true,
+  battle_pass = true,
+  integrity_status = true,
+}
 
 API.PHASES = {
   "update",
@@ -50,8 +65,6 @@ local RENDER_PHASE_SET = {
 
 local SERVICE_CAPABILITIES = {
   world_snapshot = "world",
-  materials = "materials",
-  draw = "draw",
   quality_tier = "quality",
   integrity_status = "integrity",
 }
@@ -113,6 +126,177 @@ local MAX_DATA_DEPTH = 16
 local MAX_DATA_NODES = 32768
 local MAX_DATA_BYTES = 256 * 1024
 local MAX_ERROR_MESSAGE_LENGTH = 4096
+local MAX_DRAW_ITEMS = 8192
+local MAX_DRAW_TEXT_LENGTH = 512
+local MAX_DRAW_CACHE_KEY_LENGTH = 64
+
+API.DRAW_LIMITS = {
+  cacheKeyBytes = MAX_DRAW_CACHE_KEY_LENGTH,
+  items = MAX_DRAW_ITEMS,
+  dataDepth = MAX_DATA_DEPTH,
+  dataNodes = MAX_DATA_NODES,
+  dataBytes = MAX_DATA_BYTES,
+}
+
+local DRAW_KIND_SET = {
+  mesh = true,
+  instances = true,
+  billboards = true,
+}
+
+local MESH_COMMAND_KEYS = {
+  schemaVersion = true,
+  cacheKey = true,
+  kind = true,
+  owner = true,
+  phase = true,
+  sequence = true,
+  sortKey = true,
+  material = true,
+  color = true,
+  texture = true,
+  geometry = true,
+  mesh = true,
+  resource = true,
+  model = true,
+}
+
+local INSTANCES_COMMAND_KEYS = {
+  schemaVersion = true,
+  cacheKey = true,
+  kind = true,
+  owner = true,
+  phase = true,
+  sequence = true,
+  sortKey = true,
+  material = true,
+  color = true,
+  texture = true,
+  key = true,
+  prototype = true,
+  items = true,
+}
+
+local BILLBOARDS_COMMAND_KEYS = {
+  schemaVersion = true,
+  cacheKey = true,
+  kind = true,
+  owner = true,
+  phase = true,
+  sequence = true,
+  sortKey = true,
+  material = true,
+  color = true,
+  texture = true,
+  key = true,
+  items = true,
+  procedural = true,
+  animated = true,
+}
+
+local MESH_GEOMETRY_SCHEMAS = {
+  box = {
+    fields = { primitive = "text", x = "finite", y = "finite", z = "finite",
+      width = "positive", height = "positive", depth = "positive" },
+    required = { width = true, height = true, depth = true },
+  },
+  plane = {
+    fields = { primitive = "text", x = "finite", y = "finite", z = "finite",
+      width = "positive", depth = "positive" },
+    required = { width = true, depth = true },
+  },
+  world_apron = {
+    fields = { primitive = "text", width = "positive", depth = "positive",
+      skirtDepth = "positive", neighbors = "plain" },
+    required = { width = true, depth = true, skirtDepth = true },
+  },
+  panorama = {
+    fields = { primitive = "text", sourceWidth = "positive",
+      targetWidth = "positive", deepSkirt = "boolean", distanceHaze = "boolean" },
+    required = { sourceWidth = true, targetWidth = true },
+    needsTexture = true,
+  },
+  cloud_layer = {
+    fields = { primitive = "text", layer = "positive_integer", parallax = "finite",
+      density = "unit", seed = "finite" },
+    required = { layer = true, parallax = true, density = true, seed = true },
+  },
+  rainbow = {
+    fields = { primitive = "text", seed = "finite" },
+    required = { seed = true },
+  },
+}
+
+local INSTANCE_PROTOTYPE_SCHEMAS = {
+  box = {
+    fields = { primitive = "text", width = "positive", height = "positive",
+      depth = "positive", cutaway = "boolean", role = "token" },
+  },
+  plane = {
+    fields = { primitive = "text", width = "positive", depth = "positive",
+      role = "token", alphaCutoff = "unit" },
+  },
+  door_frame = {
+    fields = { primitive = "text", role = "token", double = "boolean" },
+  },
+  window = { fields = { primitive = "text", role = "token" } },
+  poster = { fields = { primitive = "text", role = "token" }, needsTexture = true },
+  rail = { fields = { primitive = "text", role = "token" } },
+  fixture = { fields = { primitive = "text", role = "token" } },
+  sconce = { fields = { primitive = "text", role = "token" } },
+  grass_clump = {
+    fields = { primitive = "text", width = "positive", wind = "token" },
+  },
+  canopy = {
+    fields = { primitive = "text", width = "positive", cutaway = "boolean" },
+  },
+  vine = { fields = { primitive = "text", animated = "boolean" } },
+  cave_roof = {
+    fields = { primitive = "text", width = "positive", depth = "positive",
+      role = "token" },
+  },
+  mountain = {
+    fields = { primitive = "text", role = "token", shadow = "boolean" },
+  },
+  hood = {
+    fields = { primitive = "text", role = "token", shadow = "boolean" },
+  },
+  umbrella = { fields = { primitive = "text" } },
+}
+
+local INSTANCE_ITEM_KEYS = {
+  x = true,
+  y = true,
+  z = true,
+  cellX = true,
+  cellZ = true,
+  side = true,
+  facing = true,
+  poster = true,
+  seed = true,
+  lift = true,
+  summit = true,
+  kind = true,
+}
+
+local BILLBOARD_ITEM_KEYS = {
+  x = true,
+  y = true,
+  z = true,
+  width = true,
+  height = true,
+  seed = true,
+  extra = true,
+}
+
+local STAR_PROCEDURAL_KEYS = {
+  kind = true,
+  count = true,
+  seed = true,
+  twinkle = true,
+  nebula = true,
+  shootingStars = true,
+}
 
 local function is_finite(value)
   return type(value) == "number"
@@ -257,6 +441,417 @@ local function clone_data(value, path, state)
   return clone_declarative(value, path, state, 0)
 end
 
+local function bounded_text(value, path, maximum)
+  if type(value) ~= "string" or value == "" then
+    return nil, path .. " must be a non-empty string"
+  end
+  if #value > maximum then
+    return nil, ("%s must be at most %d bytes"):format(path, maximum)
+  end
+  if value:find("\0", 1, true) then return nil, path .. " must not contain NUL" end
+  return value
+end
+
+local function looks_like_resource_path(value)
+  if type(value) ~= "string" then return false end
+  local lower = value:lower()
+  if value:find("/", 1, true) or value:find("\\", 1, true)
+      or value:match("^[A-Za-z][A-Za-z0-9+%.%-]*://") then
+    return true
+  end
+  return lower:match("%.png$") ~= nil
+    or lower:match("%.jpe?g$") ~= nil
+    or lower:match("%.webp$") ~= nil
+    or lower:match("%.mp3$") ~= nil
+    or lower:match("%.ogg$") ~= nil
+    or lower:match("%.wav$") ~= nil
+    or lower:match("%.flac$") ~= nil
+    or lower:match("%.glsl$") ~= nil
+    or lower:match("%.obj$") ~= nil
+    or lower:match("%.gltf$") ~= nil
+    or lower:match("%.glb$") ~= nil
+end
+
+local function semantic_token(value, path, maximum)
+  local text, err = bounded_text(value, path, maximum or MAX_DRAW_TEXT_LENGTH)
+  if not text then return nil, err end
+  if looks_like_resource_path(text) then
+    return nil, path .. " must be a semantic identifier, not an asset or path string"
+  end
+  return text
+end
+
+local function validate_draw_cache_key(value)
+  local key, err = bounded_text(
+    value,
+    "draw command.cacheKey",
+    MAX_DRAW_CACHE_KEY_LENGTH
+  )
+  if not key then return nil, err end
+  if not key:match("^[A-Za-z0-9%._:%-]+$") then
+    return nil, "draw command.cacheKey can contain only A-Z, a-z, 0-9, dot, underscore, colon, and hyphen"
+  end
+  return true
+end
+
+local function locator_field(key)
+  if type(key) ~= "string" then return false end
+  local lower = key:lower()
+  return lower:find("asset", 1, true) ~= nil
+    or lower:find("path", 1, true) ~= nil
+    or lower == "file"
+    or lower == "filename"
+    or lower == "uri"
+    or lower == "url"
+end
+
+local function validate_no_resource_locator(value, path, active)
+  local kind = type(value)
+  if kind == "string" then
+    if looks_like_resource_path(value) then
+      return nil, path .. " contains an asset or path string"
+    end
+    return true
+  end
+  if kind ~= "table" then return true end
+  active = active or {}
+  if active[value] then return nil, path .. " contains a cycle" end
+  active[value] = true
+  for key, item in pairs(value) do
+    if locator_field(key) then
+      active[value] = nil
+      return nil, path .. " contains forbidden resource locator field " .. tostring(key)
+    end
+    local ok, err = validate_no_resource_locator(
+      item,
+      path .. "[" .. tostring(key) .. "]",
+      active
+    )
+    if not ok then active[value] = nil; return nil, err end
+  end
+  active[value] = nil
+  return true
+end
+
+local function validate_plain_wire_data(value, path, state)
+  local copy, err = clone_data(value, path, state)
+  if err then return nil, err end
+  local ok
+  ok, err = validate_no_resource_locator(copy, path)
+  if not ok then return nil, err end
+  return true
+end
+
+local function validate_opaque_resource(value, path)
+  if value == nil then return true end
+  if type(value) == "string" then
+    return nil, path .. " must be an opaque extension-owned resource, not an asset/path string"
+  end
+  local kind = type(value)
+  if kind ~= "table" and kind ~= "userdata" and kind ~= "cdata" then
+    return nil, path .. " must be an opaque extension-owned resource"
+  end
+  return true
+end
+
+local function validate_schema_field(value, rule, path, state)
+  if rule == "finite" then
+    if not is_finite(value) then return nil, path .. " must be finite" end
+  elseif rule == "positive" then
+    if not is_finite(value) or value <= 0 then return nil, path .. " must be positive" end
+  elseif rule == "positive_integer" then
+    if not is_integer(value) or value < 1 then return nil, path .. " must be a positive integer" end
+  elseif rule == "unit" then
+    if not is_finite(value) or value < 0 or value > 1 then
+      return nil, path .. " must be from 0 through 1"
+    end
+  elseif rule == "boolean" then
+    if type(value) ~= "boolean" then return nil, path .. " must be a Boolean" end
+  elseif rule == "text" then
+    return bounded_text(value, path, MAX_DRAW_TEXT_LENGTH)
+  elseif rule == "token" then
+    return semantic_token(value, path, MAX_DRAW_TEXT_LENGTH)
+  elseif rule == "plain" then
+    return validate_plain_wire_data(value, path, state)
+  else
+    return nil, path .. " has an unknown schema rule"
+  end
+  return true
+end
+
+local function validate_schema_table(value, schemas, path, state)
+  if type(value) ~= "table" or getmetatable(value) ~= nil then
+    return nil, path .. " must be a plain table"
+  end
+  local primitive = value.primitive
+  if type(primitive) ~= "string" or primitive == "" then
+    return nil, path .. ".primitive must be a non-empty string"
+  end
+  local schema = schemas[primitive]
+  if not schema then
+    return nil, path .. ".primitive is not in the API v1 baseline: " .. tostring(primitive)
+  end
+  local allowed = {}
+  for key in pairs(schema.fields) do allowed[key] = true end
+  local ok, err = validate_known_keys(value, allowed, path)
+  if not ok then return nil, err end
+  for key in pairs(schema.required or {}) do
+    if value[key] == nil then return nil, path .. "." .. key .. " is required" end
+  end
+  for key, rule in pairs(schema.fields) do
+    if key ~= "primitive" and value[key] ~= nil then
+      ok, err = validate_schema_field(value[key], rule, path .. "." .. key, state)
+      if not ok then return nil, err end
+    end
+  end
+  return schema
+end
+
+local function validate_color(value, path)
+  if value == nil then return true end
+  local count, err = validate_dense_array(value, path, 4)
+  if not count then return nil, err end
+  if count ~= 3 and count ~= 4 then return nil, path .. " must have 3 or 4 values" end
+  for index = 1, count do
+    local channel = value[index]
+    if not is_finite(channel) or channel < 0 or channel > 1 then
+      return nil, ("%s[%d] must be from 0 through 1"):format(path, index)
+    end
+  end
+  return true
+end
+
+local function validate_instance_item(item, path, state)
+  if type(item) ~= "table" or getmetatable(item) ~= nil then
+    return nil, path .. " must be a plain table"
+  end
+  local ok, err = validate_known_keys(item, INSTANCE_ITEM_KEYS, path)
+  if not ok then return nil, err end
+  for _, key in ipairs({ "x", "y", "z" }) do
+    if not is_finite(item[key]) then return nil, path .. "." .. key .. " must be finite" end
+  end
+  for _, key in ipairs({ "cellX", "cellZ" }) do
+    if item[key] ~= nil and not is_integer(item[key]) then
+      return nil, path .. "." .. key .. " must be an integer"
+    end
+  end
+  for _, key in ipairs({ "seed", "lift" }) do
+    if item[key] ~= nil and not is_finite(item[key]) then
+      return nil, path .. "." .. key .. " must be finite"
+    end
+  end
+  for _, key in ipairs({ "side", "facing", "kind" }) do
+    if item[key] ~= nil then
+      ok, err = semantic_token(item[key], path .. "." .. key, MAX_DRAW_TEXT_LENGTH)
+      if not ok then return nil, err end
+    end
+  end
+  if item.poster ~= nil then
+    local kind = type(item.poster)
+    if kind == "string" then
+      ok, err = semantic_token(item.poster, path .. ".poster", MAX_DRAW_TEXT_LENGTH)
+      if not ok then return nil, err end
+    elseif kind ~= "number" or not is_finite(item.poster) then
+      return nil, path .. ".poster must be a finite number or semantic identifier"
+    end
+  end
+  if item.summit ~= nil and type(item.summit) ~= "boolean" then
+    return nil, path .. ".summit must be a Boolean"
+  end
+  return true
+end
+
+local function validate_billboard_item(item, path, state)
+  if type(item) ~= "table" or getmetatable(item) ~= nil then
+    return nil, path .. " must be a plain table"
+  end
+  local ok, err = validate_known_keys(item, BILLBOARD_ITEM_KEYS, path)
+  if not ok then return nil, err end
+  for _, key in ipairs({ "x", "y", "z" }) do
+    if not is_finite(item[key]) then return nil, path .. "." .. key .. " must be finite" end
+  end
+  for _, key in ipairs({ "width", "height" }) do
+    if item[key] ~= nil and (not is_finite(item[key]) or item[key] <= 0) then
+      return nil, path .. "." .. key .. " must be positive"
+    end
+  end
+  if item.seed ~= nil and not is_finite(item.seed) then
+    return nil, path .. ".seed must be finite"
+  end
+  if item.extra ~= nil then
+    ok, err = validate_plain_wire_data(item.extra, path .. ".extra", state)
+    if not ok then return nil, err end
+  end
+  return true
+end
+
+local function validate_draw_common(command, expected_kind)
+  if type(command) ~= "table" or getmetatable(command) ~= nil then
+    return nil, "draw command must be a plain table"
+  end
+  local kind = command.kind
+  if not DRAW_KIND_SET[kind] then
+    return nil, "draw command.kind is not in the API v1 baseline: " .. tostring(kind)
+  end
+  if expected_kind ~= nil and expected_kind ~= kind then
+    return nil, ("draw.%s received a %s command"):format(tostring(expected_kind), tostring(kind))
+  end
+  local allowed = kind == "mesh" and MESH_COMMAND_KEYS
+    or (kind == "instances" and INSTANCES_COMMAND_KEYS or BILLBOARDS_COMMAND_KEYS)
+  local ok, err = validate_known_keys(command, allowed, "draw command")
+  if not ok then return nil, err end
+  if command.schemaVersion ~= API.DRAW_SCHEMA_VERSION then
+    return nil, ("draw command.schemaVersion must be %d"):format(API.DRAW_SCHEMA_VERSION)
+  end
+  ok, err = semantic_token(command.owner, "draw command.owner", MAX_ID_LENGTH)
+  if not ok then return nil, err end
+  if not RENDER_PHASE_SET[command.phase] then
+    return nil, "draw command.phase must be a render phase"
+  end
+  if not is_integer(command.sequence) or command.sequence < 1 then
+    return nil, "draw command.sequence must be a positive integer"
+  end
+  ok, err = validate_draw_cache_key(command.cacheKey)
+  if not ok then return nil, err end
+  ok, err = semantic_token(command.sortKey, "draw command.sortKey", MAX_DRAW_TEXT_LENGTH)
+  if not ok then return nil, err end
+  ok, err = semantic_token(command.material, "draw command.material", MAX_DRAW_TEXT_LENGTH)
+  if not ok then return nil, err end
+  ok, err = validate_color(command.color, "draw command.color")
+  if not ok then return nil, err end
+  ok, err = validate_opaque_resource(command.texture, "draw command.texture")
+  if not ok then return nil, err end
+  if command.key ~= nil then
+    ok, err = semantic_token(command.key, "draw command.key", MAX_DRAW_TEXT_LENGTH)
+    if not ok then return nil, err end
+  end
+  if command.animated ~= nil and type(command.animated) ~= "boolean" then
+    return nil, "draw command.animated must be a Boolean"
+  end
+  return true
+end
+
+local function validate_draw_mesh(command, state)
+  local direct_count = (command.mesh ~= nil and 1 or 0) + (command.resource ~= nil and 1 or 0)
+  if direct_count > 1 then return nil, "mesh command cannot contain both mesh and resource" end
+  if command.geometry ~= nil and direct_count > 0 then
+    return nil, "mesh command cannot combine declarative geometry with an opaque mesh/resource"
+  end
+  if command.geometry == nil and direct_count == 0 then
+    return nil, "mesh command needs geometry or one opaque mesh/resource"
+  end
+  local ok, err
+  if direct_count > 0 then
+    ok, err = validate_opaque_resource(command.mesh or command.resource, "mesh command resource")
+    if not ok then return nil, err end
+  else
+    local schema
+    schema, err = validate_schema_table(command.geometry, MESH_GEOMETRY_SCHEMAS,
+      "mesh command.geometry", state)
+    if not schema then return nil, err end
+    if schema.needsTexture and command.texture == nil then
+      return nil, "mesh command.texture is required for panorama geometry"
+    end
+  end
+  ok, err = validate_opaque_resource(command.model, "mesh command.model")
+  if not ok then return nil, err end
+  return true
+end
+
+local function validate_draw_instances(command, state)
+  local schema, err = validate_schema_table(
+    command.prototype,
+    INSTANCE_PROTOTYPE_SCHEMAS,
+    "instances command.prototype",
+    state
+  )
+  if not schema then return nil, err end
+  if schema.needsTexture and command.texture == nil then
+    return nil, "instances command.texture is required for poster geometry"
+  end
+  local count
+  count, err = validate_dense_array(command.items, "instances command.items", MAX_DRAW_ITEMS)
+  if not count then return nil, err end
+  if count < 1 then return nil, "instances command.items must not be empty" end
+  for index = 1, count do
+    local ok
+    ok, err = validate_instance_item(
+      command.items[index],
+      ("instances command.items[%d]"):format(index),
+      state
+    )
+    if not ok then return nil, err end
+  end
+  return true
+end
+
+local function validate_draw_billboards(command, state)
+  local has_items = command.items ~= nil
+  local has_procedural = command.procedural ~= nil
+  if has_items == has_procedural then
+    return nil, "billboards command needs exactly one of items or procedural"
+  end
+  local err
+  if has_items then
+    local count
+    count, err = validate_dense_array(command.items, "billboards command.items", MAX_DRAW_ITEMS)
+    if not count then return nil, err end
+    if count < 1 then return nil, "billboards command.items must not be empty" end
+    for index = 1, count do
+      local ok
+      ok, err = validate_billboard_item(
+        command.items[index],
+        ("billboards command.items[%d]"):format(index),
+        state
+      )
+      if not ok then return nil, err end
+    end
+    return true
+  end
+
+  local procedural = command.procedural
+  if type(procedural) ~= "table" or getmetatable(procedural) ~= nil then
+    return nil, "billboards command.procedural must be a plain table"
+  end
+  local ok
+  ok, err = validate_known_keys(procedural, STAR_PROCEDURAL_KEYS,
+    "billboards command.procedural")
+  if not ok then return nil, err end
+  if procedural.kind ~= "stars" then
+    return nil, "billboards command.procedural.kind must be stars"
+  end
+  if not is_integer(procedural.count) or procedural.count < 1
+      or procedural.count > MAX_DRAW_ITEMS then
+    return nil, ("billboards command.procedural.count must be from 1 through %d")
+      :format(MAX_DRAW_ITEMS)
+  end
+  if not is_finite(procedural.seed) then
+    return nil, "billboards command.procedural.seed must be finite"
+  end
+  for _, key in ipairs({ "twinkle", "nebula", "shootingStars" }) do
+    if procedural[key] ~= nil and type(procedural[key]) ~= "boolean" then
+      return nil, "billboards command.procedural." .. key .. " must be a Boolean"
+    end
+  end
+  return true
+end
+
+-- Hosts call this pure validator, or an equivalent implementation, before
+-- executing a draw facade command. It never changes or retains the command.
+function API.validate_draw_command(command, expected_kind)
+  if expected_kind ~= nil and not DRAW_KIND_SET[expected_kind] then
+    return nil, "expected draw kind is not in the API v1 baseline"
+  end
+  local ok, err = validate_draw_common(command, expected_kind)
+  if not ok then return nil, err end
+  local state = { active = {}, nodes = 0, bytes = 0 }
+  if command.kind == "mesh" then return validate_draw_mesh(command, state) end
+  if command.kind == "instances" then return validate_draw_instances(command, state) end
+  return validate_draw_billboards(command, state)
+end
+
+API.validateDrawCommand = API.validate_draw_command
+
 -- LuaJIT 2.1 follows Lua 5.1 table semantics. It does not honor __pairs for
 -- tables, so the lease intentionally protects named top-level fields only.
 -- Nested facades and handles remain borrowed under the documented contract.
@@ -305,7 +900,7 @@ local function validate_draw_facade(draw, path)
   return true
 end
 
-local function validate_required_facades(services, requirements, path)
+local function validate_required_facades(services, requirements, path, uses_render_services)
   for capability in pairs(requirements) do
     local facade_name = SERVICE_CAPABILITIES[capability]
     if facade_name then
@@ -314,11 +909,14 @@ local function validate_required_facades(services, requirements, path)
         return nil, ("%s.%s is required by capability %q")
           :format(path, facade_name, capability)
       end
-      if facade_name == "draw" then
-        local ok, err = validate_draw_facade(facade, path .. ".draw")
-        if not ok then return nil, err end
-      end
     end
+  end
+  if uses_render_services then
+    if type(services.materials) ~= "table" then
+      return nil, path .. ".materials is required by a render handler"
+    end
+    local ok, err = validate_draw_facade(services.draw, path .. ".draw")
+    if not ok then return nil, err end
   end
   return true
 end
@@ -342,6 +940,10 @@ local function normalize_capability_list(value, path)
     local capability = value[i]
     if type(capability) ~= "string" or capability == "" then
       return nil, ("%s[%d] must be a non-empty string"):format(path, i)
+    end
+    if not STANDARD_CAPABILITY_SET[capability] then
+      return nil, ("%s[%d] is not a standard API v1 capability: %q")
+        :format(path, i, capability)
     end
     if set[capability] then
       return nil, ("%s contains duplicate %q"):format(path, capability)
@@ -442,6 +1044,7 @@ local function normalize_spec(spec, host_capabilities)
 
   local phases = {}
   local has_phase = false
+  local uses_render_services = false
   if spec.phases ~= nil then
     if type(spec.phases) ~= "table" then
       return nil, "extension.phases must be a table"
@@ -453,7 +1056,10 @@ local function normalize_spec(spec, host_capabilities)
       if handler ~= nil and type(handler) ~= "function" then
         return nil, ("extension.phases.%s must be a function"):format(phase)
       end
-      if handler ~= nil then has_phase = true end
+      if handler ~= nil then
+        has_phase = true
+        if RENDER_PHASE_SET[phase] then uses_render_services = true end
+      end
       phases[phase] = handler
     end
   end
@@ -476,6 +1082,7 @@ local function normalize_spec(spec, host_capabilities)
       if handler ~= nil then
         phases[phase] = handler
         has_phase = true
+        uses_render_services = true
       end
     end
   end
@@ -579,6 +1186,7 @@ local function normalize_spec(spec, host_capabilities)
     started = false,
     faulted = false,
     dispose_called = false,
+    uses_render_services = uses_render_services,
   }
 end
 
@@ -833,6 +1441,10 @@ function API.new(options)
       if type(capability) ~= "string" or capability == "" then
         error(("options.capabilities[%d] must be a non-empty string"):format(i), 2)
       end
+      if not STANDARD_CAPABILITY_SET[capability] then
+        error(("options.capabilities[%d] is not a standard API v1 capability: %q")
+          :format(i, capability), 2)
+      end
       if capabilities[capability] then
         error(("options.capabilities contains duplicate %q"):format(capability), 2)
       end
@@ -1032,7 +1644,8 @@ function Dispatcher:attach(services)
     local ok, err = validate_required_facades(
       services,
       record.requirements,
-      "services"
+      "services",
+      record.uses_render_services
     )
     if not ok then return nil, ("extension %s: %s"):format(record.id, err) end
   end
@@ -1098,7 +1711,12 @@ function Dispatcher:register(spec, running_context)
 
   if self._attached then
     local ok
-    ok, err = validate_required_facades(self._services, record.requirements, "services")
+    ok, err = validate_required_facades(
+      self._services,
+      record.requirements,
+      "services",
+      record.uses_render_services
+    )
     if not ok then return nil, err end
   end
   if self._state == "running" and type(running_context) ~= "table" then

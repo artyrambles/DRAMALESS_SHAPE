@@ -2,8 +2,9 @@
 
 ## Result
 
-DRAMALESS_SHAPE now has a local, uncommitted Voxel Companion API v1 host
-integration on branch `kfp-companion-api-v1`.
+DRAMALESS_SHAPE has a local Voxel Companion API v1 host integration on branch
+`kfp-companion-api-v1`. The contract-hardening work remains local and is not
+published.
 
 - Origin: `https://github.com/artyrambles/DRAMALESS_SHAPE.git`
 - Pinned base: `f14795b17e85d5d5baedcad63944065e446a4b0b`
@@ -11,7 +12,7 @@ integration on branch `kfp-companion-api-v1`.
 - Manifest change: none
 - External push or pull request: none
 - Frozen dispatcher hash:
-  `7ACB41E52757898038454D2EA673AAE5AC1ED66768DBA38E4FD8104702FD569B`
+  `6150DA890F36666AFA88C7EE2E48D57F6C77D1C9678B7B34C988C24997ADA3A3`
 
 The official `voxel` pipeline still owns `drawWorld`. The integration adds
 callbacks inside that pass and exports `mod.exports.voxel_companion` only after
@@ -24,19 +25,19 @@ the read-only legacy check succeeds.
 | `main.lua` | Creates the host, exports the provider, sends update and invalidation events, and isolates bridge calls. |
 | `lib/VoxelScene.lua` | Adds the three certified render seams and exact camera-frame cleanup. |
 | `lib/VoxelCompanionApi.lua` | Vendors the frozen pure-Lua v1 dispatcher. |
-| `lib/VoxelCompanionHost.lua` | Implements capability negotiation, snapshots, facades, lifecycle, canonical dispatch, camera deltas, limits, and legacy refusal. |
-| `lib/VoxelCompanionRenderer.lua` | Implements bounded mesh, instance, and billboard command rendering and ownership. |
-| `docs/voxel-companion-api-v1.md` | Defines the public host contract, limits, and certification scope. |
+| `lib/VoxelCompanionHost.lua` | Implements capability negotiation, snapshots, facades, lifecycle, canonical dispatch, camera deltas, command validation, strict backend results, limits, and legacy refusal. |
+| `lib/VoxelCompanionRenderer.lua` | Implements bounded mesh, instance, and billboard rendering, collision-safe keyed caching, byte-budget LRU, and ownership. |
+| `docs/voxel-companion-api-v1.md` | Vendors the central normative v1 contract and portable draw schema. |
 | `README.md` | Adds user-facing integration and legacy-refusal notes. |
 | `CHANGELOG.md` | Adds an unreleased integration record without a version bump. |
 | `tools/package_mod.ps1` | Includes the public API document in release ZIP files. |
 | `tools/run_tests.lua` | Adds the shared zero-dependency test runner. |
 | `tools/test_bootstrap.lua` | Adds shared LuaJIT test assertions and discovery support. |
-| `tests/companion/test_api_v1.lua` | Vendors the frozen dispatcher conformance suite. |
-| `tests/companion/test_host_adapter.lua` | Tests canonical callbacks, facades, snapshots, camera restore, bounds, and faults. |
-| `tests/companion/test_host_renderer.lua` | Tests batching, cache ownership, limits, materials, and depth-state restore. |
+| `tests/companion/test_api_v1.lua` | Vendors the current central dispatcher conformance suite. |
+| `tests/companion/test_host_adapter.lua` | Tests canonical callbacks, dot-call facades, packet validation, opaque texture borrowing, exact backend results, snapshots, camera restore, bounds, and faults. |
+| `tests/companion/test_host_renderer.lua` | Tests batching, collision refusal, weak ownership, byte-budget LRU, exactly-once release, limits, materials, and draw-state restore. |
 | `tests/companion/test_host_wiring.lua` | Proves pipeline ownership, seam order, version pin, legacy policy, and package scope. |
-| `tests/fixtures/*.lua` | Provides clean and legacy-marker source fixtures. |
+| `tests/fixtures/*.lua` | Provides clean and legacy-marker source fixtures plus the shared ROM-free baseline draw fixture. |
 
 `manifest.json` is unchanged.
 
@@ -55,9 +56,21 @@ the read-only legacy check succeeds.
 - A failed extension does not stop a later extension.
 - An internal camera bridge fault rolls back the partial frame.
 - Expired and foreign draw contexts fail.
+- Draw facade methods use the normative `draw.kind(command, context)` form.
+- Every packet passes the central baseline validator before backend execution.
+- Asset and path strings fail before they reach the backend.
+- A backend draw succeeds only when it returns exact Boolean `true`.
 - World data and renderer work have hard limits.
 - Derived meshes release exactly once. Borrowed and extension-owned resources
   are not released.
+- Callback commands and opaque texture handles are not retained after a draw.
+- Declarative meshes use safe 64-byte cache keys, reject content or context
+  collisions, and use a byte-bounded LRU. The default byte budget is 48 MiB
+  and the hard maximum is 256 MiB.
+- The shared ROM-free baseline fixture executes all three portable mesh
+  primitives, all 15 common instance primitives, and explicit billboards
+  through both the adapter and real renderer. A second pass proves cache reuse.
+- A disposed renderer rejects all draw kinds without allocation or cache state.
 - The legacy marker check reads only. It does not clean or migrate a file.
 - The release package contains the API, adapter, renderer, and public contract.
   It does not contain tests.
@@ -67,8 +80,8 @@ the read-only legacy check succeeds.
 From the repository root:
 
 ```text
-luajit tools/run_tests.lua
-45 passed, 0 failed, 45 selected (4 files)
+luajit tools/run_tests.lua companion
+56 passed, 0 failed, 56 selected (4 files)
 
 luajit -e "assert(loadfile(...))"
 syntax ok
@@ -93,10 +106,12 @@ companion modules, both public integration documents, and no `tests/` content.
 5. A dirty snapshot can scan up to 262,144 cells. Static cells are reused while
    dynamic actor views refresh, but very large maps still need a measured
    invalidation test.
-6. The known legacy refusal checks the exact historical `Ceiling.draw` marker.
+6. The 48 MiB default derived-mesh cache needs measured peak-memory and churn
+   evidence on mobile-class hardware before publication.
+7. The known legacy refusal checks the exact historical `Ceiling.draw` marker.
    A different unknown splice marker cannot be detected without a new audited
    signature.
-7. The current official event set has no certified host-unload callback. The
+8. The current official event set has no certified host-unload callback. The
    adapter releases resources on handle disposal and host invalidation; a full
    runtime unload test remains required if Gen1Recomp adds that lifecycle.
 

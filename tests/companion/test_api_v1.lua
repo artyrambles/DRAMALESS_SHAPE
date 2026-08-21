@@ -12,9 +12,9 @@ return function(T)
       API.CAPABILITIES.CAMERA_DELTA,
       API.CAPABILITIES.TERRAIN_PATCH,
       API.CAPABILITIES.WORLD,
-      API.CAPABILITIES.MATERIALS,
-      API.CAPABILITIES.DRAW,
       API.CAPABILITIES.QUALITY,
+      API.CAPABILITIES.SHADOW_PASS,
+      API.CAPABILITIES.BATTLE_PASS,
       API.CAPABILITIES.INTEGRITY,
     }
   end
@@ -45,6 +45,22 @@ return function(T)
     }
   end
 
+  local DRAW_PHASE_ID = {
+    background = 1,
+    opaque_after_terrain = 2,
+    translucent_after_actors = 3,
+    shadow_casters = 4,
+    battle_opaque = 5,
+  }
+
+  local function draw_key(phase, sequence, content)
+    return ("kfp1:0123abcd:4:%d:%d:%s"):format(
+      DRAW_PHASE_ID[phase],
+      sequence,
+      content or "0123456789abcdef"
+    )
+  end
+
   local function new_running(API, capabilities)
     local dispatcher = API.new({
       host_id = "test-host",
@@ -68,10 +84,204 @@ return function(T)
     T.equal(API.CAPABILITIES.SHADOW_PASS, "shadow_pass")
     T.equal(API.CAPABILITIES.BATTLE_PASS, "battle_pass")
     T.equal(API.CAPABILITIES.INTEGRITY_STATUS, "integrity_status")
+    T.equal(API.CAPABILITIES.MATERIALS, nil)
+    T.equal(API.CAPABILITIES.DRAW, nil)
+    T.equal(API.DRAW_SCHEMA_VERSION, 1)
+    T.equal(API.DRAW_KINDS.MESH, "mesh")
+    T.equal(API.DRAW_KINDS.INSTANCES, "instances")
+    T.equal(API.DRAW_KINDS.BILLBOARDS, "billboards")
+    T.equal(API.DRAW_LIMITS.cacheKeyBytes, 64)
     T.deepEqual(API.PHASES, {
       "update", "map_changed", "background", "opaque_after_terrain",
       "translucent_after_actors", "shadow_casters", "battle_opaque",
     })
+  end)
+
+  T.test("validates the exact baseline draw packet schema", function()
+    local API = load_api()
+    local texture = { id = "extension-owned-texture" }
+    local mesh = {
+      schemaVersion = 1,
+      cacheKey = draw_key("background", 1),
+      kind = "mesh",
+      owner = "kfp.atmosphere",
+      phase = "background",
+      sequence = 1,
+      sortKey = "00:horizon",
+      material = "horizon:valley",
+      texture = texture,
+      geometry = {
+        primitive = "panorama",
+        sourceWidth = 4096,
+        targetWidth = 2048,
+        deepSkirt = true,
+        distanceHaze = true,
+      },
+    }
+    local ok, err = API.validate_draw_command(mesh, "mesh")
+    T.truthy(ok, err)
+    T.equal(mesh.texture, texture)
+
+    mesh.cacheKey = "other.extension:scene_4-cache.1"
+    ok, err = API.validate_draw_command(mesh, "mesh")
+    T.truthy(ok, err)
+    mesh.cacheKey = draw_key("background", 1)
+
+    ok, err = API.validate_draw_command({
+      schemaVersion = 1,
+      cacheKey = draw_key("opaque_after_terrain", 2),
+      kind = "instances",
+      owner = "kfp.interior",
+      phase = "opaque_after_terrain",
+      sequence = 2,
+      sortKey = "interior:wall",
+      material = "atlas:OVERWORLD:17",
+      key = "walls",
+      prototype = {
+        primitive = "box",
+        width = 16,
+        height = 24,
+        depth = 1,
+        cutaway = true,
+        role = "wall",
+      },
+      items = {
+        { x = 8, y = 12, z = 8, cellX = 0, cellZ = 0, side = "north" },
+      },
+    }, "instances")
+    T.truthy(ok, err)
+
+    ok, err = API.validate_draw_command({
+      schemaVersion = 1,
+      cacheKey = draw_key("background", 3),
+      kind = "billboards",
+      owner = "kfp.atmosphere",
+      phase = "background",
+      sequence = 3,
+      sortKey = "20:stars",
+      material = "sky:stars",
+      procedural = {
+        kind = "stars",
+        count = 64,
+        seed = 42,
+        twinkle = true,
+        nebula = true,
+        shootingStars = false,
+      },
+    }, "billboards")
+    T.truthy(ok, err)
+  end)
+
+  T.test("rejects path strings, unversioned commands, and non-baseline fields", function()
+    local API = load_api()
+    local function plane()
+      return {
+        schemaVersion = 1,
+        cacheKey = draw_key("opaque_after_terrain", 1),
+        kind = "mesh",
+        owner = "kfp.world",
+        phase = "opaque_after_terrain",
+        sequence = 1,
+        sortKey = "world:plane",
+        material = "world:apron",
+        geometry = { primitive = "plane", width = 16, depth = 16 },
+      }
+    end
+
+    local command = plane()
+    command.schemaVersion = nil
+    local ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("schemaVersion"))
+
+    command = plane()
+    command.cacheKey = "kfp1:0123abcd:" .. string.rep("9", 40)
+      .. ":2:1:0123456789abcdef"
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("at most 64"))
+
+    command = plane()
+    command.cacheKey = "other extension/scene"
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("can contain only"))
+
+    command = plane()
+    command.geometry.asset = "assets/legacy/horizons/backdrop.png"
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("unknown field"))
+
+    command = plane()
+    command.texture = "assets/legacy/horizons/backdrop.png"
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("asset/path string"))
+
+    command = plane()
+    command.material = "assets/legacy/material.png"
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("asset or path string"))
+
+    command = plane()
+    command.geometry = { primitive = "raised_structure" }
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("not in the API v1 baseline"))
+
+    ok, err = API.validate_draw_command({
+      schemaVersion = 1,
+      cacheKey = draw_key("translucent_after_actors", 1),
+      kind = "billboards",
+      owner = "kfp.wildlife",
+      phase = "translucent_after_actors",
+      sequence = 1,
+      sortKey = "wildlife:bird",
+      material = "wildlife:bird",
+      items = {
+        { x = 1, y = 2, z = 3, extra = { derivedAsset = "birds" } },
+      },
+    })
+    T.falsy(ok)
+    T.truthy(err:match("forbidden resource locator"))
+  end)
+
+  T.test("uses draw kind methods with command and the current borrowed context", function()
+    local API = load_api()
+    local seen_context
+    local services = host_services()
+    services.draw.mesh = function(command, context)
+      T.equal(command.cacheKey, draw_key("background", 1))
+      T.equal(context.frame.index, 1)
+      seen_context = context
+    end
+    local dispatcher = API.new({ capabilities = { API.CAPABILITIES.RENDER_PHASES } })
+    local handle, err = dispatcher:register({
+      api = 1,
+      id = "draw.signature",
+      render = {
+        background = function(context)
+          context.draw.mesh({
+            schemaVersion = 1,
+            cacheKey = draw_key("background", 1),
+            kind = "mesh",
+            owner = "draw.signature",
+            phase = "background",
+            sequence = 1,
+            sortKey = "draw:signature",
+            material = "host:test",
+            geometry = { primitive = "plane", width = 1, depth = 1 },
+          }, context)
+        end,
+      },
+    })
+    T.truthy(handle, err)
+    T.truthy(dispatcher:attach(services))
+    T.truthy(dispatcher:start(render_context(services)))
+    T.truthy(dispatcher:render("background", render_context(services)))
+    T.raises(function() return seen_context.frame end, "no longer valid")
   end)
 
   T.test("builds the voxel_companion wire descriptor expected by clients", function()
@@ -234,24 +444,48 @@ return function(T)
     T.truthy(err:match("extension limit"))
   end)
 
-  T.test("validates only service facades required by declared capabilities", function()
+  T.test("treats materials and draw as render services, not capabilities", function()
     local API = load_api()
-    local dispatcher = API.new({ capabilities = { API.CAPABILITIES.QUALITY } })
-    local attached = dispatcher:attach({})
-    T.truthy(attached)
+    T.raises(function()
+      API.new({ capabilities = { "draw" } })
+    end, "not a standard API v1 capability")
 
-    local other = API.new({ capabilities = { API.CAPABILITIES.DRAW } })
-    local handle, err = other:register({
+    local dispatcher = API.new({ capabilities = { API.CAPABILITIES.RENDER_PHASES } })
+    local handle, err = dispatcher:register({
       api = 1,
-      id = "needs.draw",
-      requires = { API.CAPABILITIES.DRAW },
-      lifecycle = { start = function() end },
+      id = "render.services",
+      render = { background = function() end },
     })
     T.truthy(handle, err)
     local ok
-    ok, err = other:attach({ draw = { mesh = function() end } })
+    ok, err = dispatcher:attach({})
+    T.falsy(ok)
+    T.truthy(err:match("materials"))
+    ok, err = dispatcher:attach({
+      materials = {},
+      draw = { mesh = function() end },
+    })
     T.falsy(ok)
     T.truthy(err:match("instances"))
+    ok, err = dispatcher:attach({
+      materials = {},
+      draw = {
+        mesh = function() end,
+        instances = function() end,
+        billboards = function() end,
+      },
+    })
+    T.truthy(ok, err)
+
+    local other = API.new({ capabilities = {} })
+    handle, err = other:register({
+      api = 1,
+      id = "invalid.facade.capability",
+      requires = { "materials" },
+      lifecycle = { start = function() end },
+    })
+    T.falsy(handle)
+    T.truthy(err:match("not a standard API v1 capability"))
   end)
 
   T.test("runs attach start invalidate and dispose in a bounded lifecycle", function()
@@ -632,7 +866,8 @@ return function(T)
   T.test("requires a normalized render context only when a render handler runs", function()
     local API = load_api()
     local dispatcher = API.new({ capabilities = { API.CAPABILITIES.RENDER_PHASES } })
-    T.truthy(dispatcher:attach({}))
+    local services = host_services()
+    T.truthy(dispatcher:attach(services))
     T.truthy(dispatcher:start({}))
     local empty = dispatcher:dispatch("background", {})
     T.truthy(empty)

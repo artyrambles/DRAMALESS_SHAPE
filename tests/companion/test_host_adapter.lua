@@ -6,6 +6,13 @@ return function(T)
     return chunk(argument)
   end
 
+  local function load_fixture(relative)
+    local source = T.read(relative)
+    local chunk, err = loadstring(source, "@" .. relative)
+    if not chunk then error(err, 0) end
+    return chunk()
+  end
+
   local function new_backend()
     local backend = {
       calls = {}, phases = {}, invalidations = 0, disposals = 0,
@@ -155,6 +162,31 @@ return function(T)
     }
   end
 
+  local function draw_packet(kind, phase, sequence, fields)
+    local command = {
+      schemaVersion = 1,
+      cacheKey = ("adapter:%s:%d"):format(phase, sequence),
+      kind = kind,
+      owner = "adapter.test",
+      phase = phase,
+      sequence = sequence,
+      sortKey = ("adapter:%04d"):format(sequence),
+      material = "host:test",
+    }
+    if kind == "mesh" then
+      command.geometry = { primitive = "plane", width = 1, depth = 1 }
+    elseif kind == "instances" then
+      command.prototype = {
+        primitive = "box", width = 1, height = 1, depth = 1,
+      }
+      command.items = { { x = 0, y = 0, z = 0 } }
+    elseif kind == "billboards" then
+      command.items = { { x = 0, y = 0, z = 0, width = 1, height = 1 } }
+    end
+    for key, value in pairs(fields or {}) do command[key] = value end
+    return command
+  end
+
   local function begin_frame(env, state)
     return env.host:beginWorldFrame({
       state = state,
@@ -189,7 +221,6 @@ return function(T)
     local attached
     local handle, err = provider.register(extension("facades", {
       requires = { "world_snapshot", "quality_tier", "integrity_status" },
-      optional = { "materials", "draw" },
       attach = function(services)
         attached = {
           world = services.world,
@@ -299,24 +330,24 @@ return function(T)
     local order, camera_calls = {}, 0
     local handle, err = env.host:provider().register(extension("render", {
       requires = { "world_snapshot", "camera_delta", "render_phases" },
-      optional = { "materials", "draw" },
       render = {
         background = function(context)
           order[#order + 1] = "background"
-          context.draw:mesh({ kind = "mesh", owner = "render",
-            phase = "background", geometry = { primitive = "panorama" } }, context)
+          context.draw.mesh(draw_packet("mesh", "background", 1, {
+            owner = "render",
+          }), context)
         end,
         opaque_after_terrain = function(context)
           order[#order + 1] = "opaque"
-          context.draw:instances({ kind = "instances", owner = "render",
-            phase = "opaque_after_terrain", prototype = { primitive = "box" },
-            items = { { x = 0, y = 0, z = 0 } } }, context)
+          context.draw.instances(draw_packet(
+            "instances", "opaque_after_terrain", 2, { owner = "render" }
+          ), context)
         end,
         translucent_after_actors = function(context)
           order[#order + 1] = "translucent"
-          context.draw:billboards({ kind = "billboards", owner = "render",
-            phase = "translucent_after_actors",
-            items = { { x = 0, y = 0, z = 0 } } }, context)
+          context.draw.billboards(draw_packet(
+            "billboards", "translucent_after_actors", 3, { owner = "render" }
+          ), context)
         end,
       },
       modifyCamera = function(camera)
@@ -355,6 +386,161 @@ return function(T)
     T.equal(env.camera.focus, original_focus)
     T.equal(env.camera.up, original_up)
     T.equal(env.camera.fov, original_fov)
+  end)
+
+  T.test("executes the frozen baseline fixture through adapter and renderer", function()
+    local fixture = load_fixture("tests/fixtures/voxel_companion_draw_v1.lua")
+    local voxel = { meshes = {}, draws = 0 }
+    function voxel.newMesh(vertices, indices)
+      local mesh = { vertices = vertices, indices = indices, releases = 0 }
+      function mesh:release() self.releases = self.releases + 1 end
+      voxel.meshes[#voxel.meshes + 1] = mesh
+      return mesh
+    end
+    function voxel.draw() voxel.draws = voxel.draws + 1 end
+    function voxel.glass() end
+    function voxel.depth() end
+    local Renderer = load_with_argument("lib/VoxelCompanionRenderer.lua", {
+      require = function(name) error("unexpected module request: " .. name, 2) end,
+    })
+    local backend, backend_error = Renderer.new({
+      voxel3d = voxel,
+      mat4 = {},
+      graphics = { setColor = function() end, setDepthMode = function() end },
+    })
+    T.truthy(backend, backend_error)
+    local env = new_environment(T, { backend = backend })
+    local state = new_state()
+    T.truthy(env.host:update(1 / 60, 3, state))
+
+    local render = {}
+    for _, name in ipairs({
+      "background", "opaque_after_terrain", "translucent_after_actors",
+    }) do
+      local phase = name
+      render[phase] = function(context)
+        for _, command in ipairs(fixture.phases[phase]) do
+          context.draw[command.kind](command, context)
+        end
+      end
+    end
+    local handle, register_error = env.host:provider().register(extension(
+      "golden.fixture",
+      { render = render }
+    ))
+    T.truthy(handle, register_error)
+
+    for pass = 1, 2 do
+      T.truthy(begin_frame(env, state))
+      for _, phase in ipairs({
+        "background", "opaque_after_terrain", "translucent_after_actors",
+      }) do
+        local report, render_error = env.host:dispatchRenderPhase(phase)
+        T.truthy(report, render_error)
+        T.equal(report.succeeded, 1)
+      end
+      T.truthy(env.host:endWorldFrame("fixture-pass-" .. pass))
+    end
+
+    T.equal(fixture.commandCount, 19)
+    T.equal(#fixture.instancePrimitives, 15)
+    T.equal(#voxel.meshes, fixture.commandCount)
+    T.equal(voxel.draws, fixture.commandCount * 2)
+    T.equal(backend:status().cacheEntries, fixture.commandCount)
+    T.truthy(env.host:dispose("fixture-complete"))
+    for _, mesh in ipairs(voxel.meshes) do T.equal(mesh.releases, 1) end
+  end)
+
+  T.test("borrows an opaque extension texture for one validated draw call", function()
+    local backend = new_backend()
+    local released, saw_texture = 0, false
+    local texture = {
+      release = function() released = released + 1 end,
+    }
+    function backend:mesh(command, context)
+      T.equal(command.texture, texture)
+      T.equal(context.phase, "background")
+      saw_texture = true
+      return true
+    end
+    local env = new_environment(T, { backend = backend })
+    local state = new_state()
+    T.truthy(env.host:update(1 / 60, 3, state))
+    local handle, err = env.host:provider().register(extension("opaque.texture", {
+      render = { background = function(context)
+        context.draw.mesh(draw_packet("mesh", "background", 1, {
+          owner = "opaque.texture",
+          material = "horizon:test",
+          texture = texture,
+          geometry = {
+            primitive = "panorama",
+            sourceWidth = 4096,
+            targetWidth = 2048,
+          },
+        }), context)
+      end },
+    }))
+    T.truthy(handle, err)
+    T.truthy(begin_frame(env, state))
+    local report, render_error = env.host:dispatchRenderPhase("background")
+    T.truthy(report, render_error)
+    T.equal(report.succeeded, 1)
+    T.truthy(saw_texture)
+    T.equal(released, 0)
+    env.host:endWorldFrame()
+    T.equal(released, 0)
+  end)
+
+  T.test("rejects path-bearing packets before the backend and continues", function()
+    local env = new_environment(T)
+    local state = new_state()
+    T.truthy(env.host:update(1 / 60, 3, state))
+    local invalid = env.host:provider().register(extension("a.path", {
+      render = { background = function(context)
+        context.draw.mesh(draw_packet("mesh", "background", 1, {
+          owner = "a.path",
+          texture = "assets/legacy/horizons/backdrop.png",
+        }), context)
+      end },
+    }))
+    T.truthy(invalid)
+    T.truthy(env.host:provider().register(extension("b.safe", {
+      priority = 1,
+      render = { background = function(context)
+        context.draw.mesh(draw_packet("mesh", "background", 2, {
+          owner = "b.safe",
+        }), context)
+      end },
+    })))
+    T.truthy(begin_frame(env, state))
+    local report, render_error = env.host:dispatchRenderPhase("background")
+    T.truthy(report, render_error)
+    T.equal(report.failed, 1)
+    T.equal(report.succeeded, 1)
+    T.truthy(invalid:status().faulted)
+    T.equal(#env.backend.calls, 1)
+    T.equal(env.backend.calls[1].owner, "b.safe")
+    env.host:endWorldFrame()
+  end)
+
+  T.test("requires the draw backend to return exact true", function()
+    local backend = new_backend()
+    function backend:mesh() return "truthy-but-not-true" end
+    local env = new_environment(T, { backend = backend })
+    local state = new_state()
+    T.truthy(env.host:update(1 / 60, 3, state))
+    local handle, err = env.host:provider().register(extension("backend.result", {
+      render = { background = function(context)
+        context.draw.mesh(draw_packet("mesh", "background", 1), context)
+      end },
+    }))
+    T.truthy(handle, err)
+    T.truthy(begin_frame(env, state))
+    local report, render_error = env.host:dispatchRenderPhase("background")
+    T.truthy(report, render_error)
+    T.equal(report.failed, 1)
+    T.truthy(handle:status().faulted)
+    env.host:endWorldFrame()
   end)
 
   T.test("rejects optional seams and terrain that the host cannot run", function()
@@ -409,8 +595,9 @@ return function(T)
     T.truthy(env.host:provider().register(extension("b.good", {
       priority = 1,
       render = { background = function(context)
-        context.draw:mesh({ kind = "mesh", owner = "b.good",
-          phase = "background", geometry = { primitive = "panorama" } }, context)
+        context.draw.mesh(draw_packet("mesh", "background", 1, {
+          owner = "b.good",
+        }), context)
       end },
     })))
     T.truthy(begin_frame(env, state))
@@ -433,17 +620,18 @@ return function(T)
       render = {
         background = function(context) old_context = context end,
         opaque_after_terrain = function(context)
-          context.draw:mesh({ kind = "mesh", owner = "a.lease",
-            phase = "opaque_after_terrain", geometry = { primitive = "box" } },
-            old_context)
+          context.draw.mesh(draw_packet("mesh", "opaque_after_terrain", 1, {
+            owner = "a.lease",
+          }), old_context)
         end,
       },
     })))
     T.truthy(env.host:provider().register(extension("b.after", {
       priority = 1,
       render = { opaque_after_terrain = function(context)
-        context.draw:mesh({ kind = "mesh", owner = "b.after",
-          phase = "opaque_after_terrain", geometry = { primitive = "box" } }, context)
+        context.draw.mesh(draw_packet("mesh", "opaque_after_terrain", 2, {
+          owner = "b.after",
+        }), context)
       end },
     })))
     T.truthy(begin_frame(env, state))

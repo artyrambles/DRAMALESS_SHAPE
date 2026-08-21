@@ -47,6 +47,7 @@ return function(T)
     T.truthy(host:find('Host.LEGACY_MARKERS', 1, true))
     T.truthy(host:find('"Ceiling.draw"', 1, true))
     T.truthy(host:find('read_source', 1, true))
+    T.truthy(host:find('max_cache_bytes = options.max_cache_bytes', 1, true))
     T.falsy(host:find("os.remove", 1, true))
     T.falsy(host:find("io.open", 1, true))
   end)
@@ -56,6 +57,8 @@ return function(T)
     T.truthy(script:find('"assets", "data", "docs", "lib"', 1, true))
     T.truthy(script:find('"CHANGELOG.md", "LICENSE", "README.md", "main.lua", "manifest.json", "mod.card"', 1, true))
     T.truthy(T.read("docs/voxel-companion-api-v1.md"):find(
+      "Status: normative v1 contract", 1, true))
+    T.truthy(T.read("docs/kfp-companion-integration-report.md"):find(
       "f14795b17e85d5d5baedcad63944065e446a4b0b", 1, true))
   end)
 end

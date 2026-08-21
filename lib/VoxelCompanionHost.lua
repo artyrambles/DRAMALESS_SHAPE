@@ -245,16 +245,13 @@ local function make_facades(self)
     }
   end
 
-  draw.mesh = function(first, second, third)
-    local command, context = method_arguments(draw, first, second, third)
+  draw.mesh = function(command, context)
     return self:_draw("mesh", command, context)
   end
-  draw.instances = function(first, second, third)
-    local command, context = method_arguments(draw, first, second, third)
+  draw.instances = function(command, context)
     return self:_draw("instances", command, context)
   end
-  draw.billboards = function(first, second, third)
-    local command, context = method_arguments(draw, first, second, third)
+  draw.billboards = function(command, context)
     return self:_draw("billboards", command, context)
   end
 
@@ -284,6 +281,7 @@ function Host.new(options)
       voxel3d = options.voxel3d or V.require("Voxel3D"),
       mat4 = options.mat4 or V.require("Mat4"),
       max_cache_entries = options.max_cache_entries,
+      max_cache_bytes = options.max_cache_bytes,
       max_items = options.max_draw_items,
       max_vertices = options.max_draw_vertices,
     })
@@ -944,11 +942,9 @@ function Host:_draw(kind, command, context)
   if not Host.SAFE_PHASES[self._render.phase] then
     error("draw facade is unavailable in phase " .. tostring(self._render.phase), 2)
   end
-  if type(command) ~= "table" then error("draw command must be a table", 2) end
-  if command.kind ~= nil and command.kind ~= kind then
-    error(("draw.%s received a %s command"):format(kind, tostring(command.kind)), 2)
-  end
-  if command.phase ~= nil and command.phase ~= self._render.phase then
+  local valid, validation_error = CompanionApi.validate_draw_command(command, kind)
+  if not valid then error(tostring(validation_error), 2) end
+  if command.phase ~= self._render.phase then
     error("draw command phase does not match the active host phase", 2)
   end
   if type(context) ~= "table" then error("draw command needs its borrowed context", 2) end
@@ -965,8 +961,10 @@ function Host:_draw(kind, command, context)
   if type(method) ~= "function" then error("host draw backend does not support " .. kind, 2) end
   self._draw_count = self._draw_count + 1
   local result, err = method(self._backend, command, self:_backendContext(context))
-  if result == nil or result == false then error(tostring(err or (kind .. " draw failed")), 2) end
-  return result
+  if result ~= true then
+    error(tostring(err or (kind .. " draw backend must return true")), 2)
+  end
+  return true
 end
 
 function Host:dispatchRenderPhase(phase)

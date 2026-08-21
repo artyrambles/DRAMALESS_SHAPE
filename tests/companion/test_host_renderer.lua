@@ -56,19 +56,21 @@ return function(T)
       mat4 = {},
       graphics = graphics,
       max_cache_entries = options.max_cache_entries,
+      max_cache_bytes = options.max_cache_bytes,
       max_items = options.max_items,
       max_vertices = options.max_vertices,
     })
     return renderer, err, voxel, graphics, Renderer
   end
 
-  local function context()
+  local function context(generation)
+    generation = generation or 1
     return {
       phase = "opaque_after_terrain",
       world = {
         id = "PALLET_TOWN",
-        key = "red:PALLET_TOWN:1",
-        atlasRevision = "OVERWORLD:1",
+        key = "red:PALLET_TOWN:" .. generation,
+        atlasRevision = "OVERWORLD:" .. generation,
         width = 2,
         height = 2,
         cellSize = 16,
@@ -80,48 +82,84 @@ return function(T)
         },
       },
       atlas = { id = "borrowed-atlas" },
-      frame = { sequence = 1 },
+      frame = { sequence = generation },
     }
   end
 
-  T.test("creates and reuses bounded host-owned meshes", function()
+  local function base_command(kind, key, fields)
+    local command = {
+      schemaVersion = 1,
+      cacheKey = key,
+      kind = kind,
+      owner = "renderer.test",
+      phase = "opaque_after_terrain",
+      sequence = 1,
+      sortKey = key,
+      material = "host:test",
+    }
+    for field, value in pairs(fields or {}) do command[field] = value end
+    return command
+  end
+
+  local function mesh_command(key, geometry, fields)
+    fields = fields or {}
+    fields.geometry = geometry or {
+      primitive = "plane", width = 1, depth = 1,
+    }
+    return base_command("mesh", key, fields)
+  end
+
+  local function instances_command(key, prototype, items, fields)
+    fields = fields or {}
+    fields.prototype = prototype
+    fields.items = items
+    return base_command("instances", key, fields)
+  end
+
+  local function billboards_command(key, items, fields)
+    fields = fields or {}
+    fields.items = items
+    return base_command("billboards", key, fields)
+  end
+
+  T.test("creates and reuses one cache-keyed host mesh", function()
     local renderer, err, voxel = new_renderer()
     T.truthy(renderer, err)
-    local command = {
-      kind = "mesh",
-      material = "world:apron",
-      geometry = { primitive = "box", width = 4, height = 5, depth = 6 },
-    }
-    T.equal(renderer:mesh(command, context()), 1)
+    local command = mesh_command("mesh.box.g1", {
+      primitive = "box", width = 4, height = 5, depth = 6,
+    }, { material = "world:apron" })
+    local ctx = context(1)
+    T.equal(renderer:mesh(command, ctx), true)
     T.equal(#voxel.meshes, 1)
     T.equal(#voxel.meshes[1].vertices, 24)
     T.equal(#voxel.meshes[1].indices, 36)
     T.equal(#voxel.draws, 1)
-    T.equal(renderer:mesh(command, context()), 1)
+    T.equal(renderer:mesh(command, ctx), true)
     T.equal(#voxel.meshes, 1)
     T.equal(#voxel.draws, 2)
     T.equal(renderer:status().cacheEntries, 1)
+    T.truthy(renderer:status().cacheBytes > 0)
   end)
 
-  T.test("batches instance and billboard command packets into one draw each", function()
+  T.test("batches instance and billboard packets into one draw each", function()
     local renderer, err, voxel = new_renderer()
     T.truthy(renderer, err)
     local ctx = context()
-    T.equal(renderer:instances({
-      kind = "instances",
-      material = "interior:wall",
-      prototype = { primitive = "box", width = 4, height = 8, depth = 1 },
-      items = {
+    T.equal(renderer:instances(instances_command(
+      "instances.wall.g1",
+      { primitive = "box", width = 4, height = 8, depth = 1 },
+      {
         { x = 1, y = 4, z = 1 },
         { x = 6, y = 4, z = 1 },
       },
-    }, ctx), 1)
+      { material = "interior:wall" }
+    ), ctx), true)
     T.equal(#voxel.meshes[1].vertices, 48)
-    T.equal(renderer:billboards({
-      kind = "billboards",
-      material = "wildlife:bird",
-      items = { { x = 4, y = 16, z = 8 } },
-    }, ctx), 1)
+    T.equal(renderer:billboards(billboards_command(
+      "billboards.bird.g1",
+      { { x = 4, y = 16, z = 8 } },
+      { material = "wildlife:bird" }
+    ), ctx), true)
     T.equal(#voxel.meshes[2].vertices, 8)
     T.equal(#voxel.draws, 2)
   end)
@@ -129,20 +167,19 @@ return function(T)
   T.test("builds deterministic procedural stars within the item limit", function()
     local renderer, err, voxel = new_renderer({ max_items = 10 })
     T.truthy(renderer, err)
-    local command = {
-      kind = "billboards",
+    local command = base_command("billboards", "billboards.stars.g1", {
       material = "sky:stars",
       procedural = { kind = "stars", count = 5, seed = 42 },
-    }
-    T.equal(renderer:billboards(command, context()), 1)
+    })
+    T.equal(renderer:billboards(command, context()), true)
     T.equal(#voxel.meshes[1].vertices, 40)
     local first = voxel.meshes[1].vertices[1]
     renderer:invalidate()
-    T.equal(renderer:billboards(command, context()), 1)
+    T.equal(renderer:billboards(command, context()), true)
     T.deepEqual(voxel.meshes[2].vertices[1], first)
   end)
 
-  T.test("borrows atlas handles and resolves stable semantic materials", function()
+  T.test("borrows atlas handles and resolves semantic materials", function()
     local renderer, err, voxel = new_renderer()
     T.truthy(renderer, err)
     local ctx = context()
@@ -155,70 +192,162 @@ return function(T)
     T.deepEqual(first, second)
     T.falsy(first.atlas)
 
-    local command = {
-      kind = "mesh",
-      material = "atlas:OVERWORLD:17",
-      geometry = { primitive = "plane", width = 4, depth = 4 },
-    }
-    T.equal(renderer:mesh(command, ctx), 1)
+    local command = mesh_command("mesh.atlas.g1", {
+      primitive = "plane", width = 4, depth = 4,
+    }, { material = "atlas:OVERWORLD:17" })
+    T.equal(renderer:mesh(command, ctx), true)
     T.equal(voxel.draws[1].texture, ctx.atlas)
     T.truthy(voxel.glassStates[1])
   end)
 
-  T.test("draws an extension-owned mesh without claiming or releasing it", function()
+  T.test("draws a direct extension mesh without claiming or releasing it", function()
     local renderer, err, voxel = new_renderer()
     T.truthy(renderer, err)
     local resource = { releases = 0 }
     function resource:release() self.releases = self.releases + 1 end
-    T.equal(renderer:mesh({
-      kind = "mesh",
+    local command = base_command("mesh", "mesh.direct.g1", {
       material = "host:borrowed",
       mesh = resource,
-    }, context()), 1)
+    })
+    T.equal(renderer:mesh(command, context()), true)
     T.equal(#voxel.meshes, 0)
     T.equal(voxel.draws[1].mesh, resource)
     T.truthy(renderer:dispose())
     T.equal(resource.releases, 0)
   end)
 
-  T.test("releases derived meshes once on replacement eviction and disposal", function()
-    local renderer, err, voxel = new_renderer({ max_cache_entries = 1 })
+  T.test("rejects cache-key content and context collisions without replacement", function()
+    local renderer, err, voxel = new_renderer()
     T.truthy(renderer, err)
-    local ctx = context()
-    local first = {
-      material = "one",
-      geometry = { primitive = "plane", width = 2, depth = 2 },
-    }
-    local second = {
-      material = "two",
-      geometry = { primitive = "plane", width = 3, depth = 3 },
-    }
-    T.equal(renderer:mesh(first, ctx), 1)
+    local original = mesh_command("mesh.collision", {
+      primitive = "plane", width = 2, depth = 2,
+    })
+    local original_context = context(1)
+    T.equal(renderer:mesh(original, original_context), true)
+    local retained = voxel.meshes[1]
+
+    local changed = mesh_command("mesh.collision", {
+      primitive = "plane", width = 3, depth = 2,
+    })
+    local result, draw_error = renderer:mesh(changed, original_context)
+    T.falsy(result)
+    T.truthy(tostring(draw_error):find("content collision", 1, true))
+    T.equal(#voxel.meshes, 1)
+    T.equal(retained.releases, 0)
+
+    result, draw_error = renderer:mesh(original, context(2))
+    T.falsy(result)
+    T.truthy(tostring(draw_error):find("content collision", 1, true))
+    T.equal(#voxel.meshes, 1)
+    T.equal(retained.releases, 0)
+
+    T.equal(renderer:mesh(original, original_context), true)
+    T.equal(#voxel.meshes, 1)
+    T.equal(renderer:status().cacheEntries, 1)
+  end)
+
+  T.test("does not retain callback commands or opaque textures", function()
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    local weak = setmetatable({}, { __mode = "k" })
+    local texture = { id = "callback-texture" }
+    local command = mesh_command("mesh.gc.g1", {
+      primitive = "plane", width = 2, depth = 2,
+    }, { texture = texture })
+    weak[command] = "command"
+    weak[texture] = "texture"
+    T.equal(renderer:mesh(command, context()), true)
+    T.equal(renderer:status().cacheEntries, 1)
+
+    -- The mock records draw arguments for assertions. The production draw call
+    -- does not transfer ownership, so remove this test-only history first.
+    voxel.draws = {}
+    command, texture = nil, nil
+    collectgarbage("collect")
+    collectgarbage("collect")
+
+    local retained = 0
+    for _ in pairs(weak) do retained = retained + 1 end
+    T.equal(retained, 0)
+    T.equal(renderer:status().cacheEntries, 1)
+  end)
+
+  T.test("evicts by byte-cap LRU and releases each mesh exactly once", function()
+    local renderer, err, voxel = new_renderer({
+      max_cache_entries = 8,
+      max_cache_bytes = 1024,
+    })
+    T.truthy(renderer, err)
+    local first = mesh_command("mesh.lru.g1.first", {
+      primitive = "plane", width = 2, depth = 2,
+    })
+    local second = mesh_command("mesh.lru.g1.second", {
+      primitive = "plane", width = 3, depth = 3,
+    })
+    local third = mesh_command("mesh.lru.g2.third", {
+      primitive = "plane", width = 4, depth = 4,
+    })
+
+    T.equal(renderer:mesh(first, context(1)), true)
     local first_mesh = voxel.meshes[1]
-    T.equal(renderer:mesh(second, ctx), 1)
-    T.equal(first_mesh.releases, 1)
+    T.equal(renderer:mesh(second, context(1)), true)
     local second_mesh = voxel.meshes[2]
-    ctx.world.key = "red:PALLET_TOWN:2"
-    T.equal(renderer:mesh(second, ctx), 1)
+    T.equal(renderer:mesh(first, context(1)), true)
+    T.equal(renderer:mesh(third, context(2)), true)
+    local third_mesh = voxel.meshes[3]
+
+    T.equal(first_mesh.releases, 0)
     T.equal(second_mesh.releases, 1)
-    local replacement = voxel.meshes[3]
+    T.equal(third_mesh.releases, 0)
+    local status = renderer:status()
+    T.equal(status.cacheEntries, 2)
+    T.equal(status.maxCacheEntries, 8)
+    T.equal(status.cacheBytes, 752)
+    T.equal(status.maxCacheBytes, 1024)
+
     T.truthy(renderer:dispose())
     T.truthy(renderer:dispose())
-    T.equal(replacement.releases, 1)
+    T.equal(first_mesh.releases, 1)
+    T.equal(second_mesh.releases, 1)
+    T.equal(third_mesh.releases, 1)
+    T.equal(renderer:status().cacheBytes, 0)
+  end)
+
+  T.test("releases an over-budget mesh without caching it", function()
+    local renderer, err, voxel = new_renderer({ max_cache_bytes = 1024 })
+    T.truthy(renderer, err)
+    local command = mesh_command("mesh.oversize.g1", {
+      primitive = "world_apron",
+      width = 32,
+      depth = 32,
+      skirtDepth = 128,
+    })
+    local result, draw_error = renderer:mesh(command, context())
+    T.falsy(result)
+    T.truthy(tostring(draw_error):find("cache byte limit", 1, true))
+    T.equal(#voxel.meshes, 1)
+    T.equal(voxel.meshes[1].releases, 1)
+    T.equal(renderer:status().cacheEntries, 0)
+    T.equal(renderer:status().cacheBytes, 0)
+    T.truthy(renderer:dispose())
+    T.equal(voxel.meshes[1].releases, 1)
   end)
 
   T.test("rejects unsupported terrain and shadow primitives", function()
     local renderer, err = new_renderer()
     T.truthy(renderer, err)
-    for _, primitive in ipairs({ "raised_structure", "shadow_caster" }) do
+    local cases = {
+      { primitive = "raised_structure", message = "terrain_patch" },
+      { primitive = "shadow_caster", message = "not supported" },
+    }
+    for index, case in ipairs(cases) do
       T.raises(function()
-        renderer:instances({
-          kind = "instances",
-          material = "test",
-          prototype = { primitive = primitive },
-          items = { { x = 0, y = 0, z = 0 } },
-        }, context())
-      end, primitive == "raised_structure" and "terrain_patch" or "not supported")
+        renderer:instances(instances_command(
+          "instances.unsupported." .. index,
+          { primitive = case.primitive },
+          { { x = 0, y = 0, z = 0 } }
+        ), context())
+      end, case.message)
     end
     T.falsy(renderer.lights)
     T.falsy(renderer.postprocess)
@@ -228,24 +357,68 @@ return function(T)
     local renderer, err = new_renderer({ max_items = 1, max_vertices = 24 })
     T.truthy(renderer, err)
     T.raises(function()
-      renderer:billboards({
-        material = "test",
-        items = { { x = 0 }, { x = 1 } },
-      }, context())
+      renderer:billboards(billboards_command(
+        "billboards.limit.items",
+        { { x = 0, y = 0, z = 0 }, { x = 1, y = 0, z = 0 } }
+      ), context())
     end, "item limit")
     T.raises(function()
-      renderer:instances({
-        material = "test",
-        prototype = { primitive = "box" },
-        items = { { x = 0 }, { x = 1 } },
-      }, context())
+      renderer:instances(instances_command(
+        "instances.limit.items",
+        { primitive = "box" },
+        { { x = 0, y = 0, z = 0 }, { x = 1, y = 0, z = 0 } }
+      ), context())
     end, "item limit")
     T.raises(function()
-      renderer:mesh({
-        material = "test",
-        geometry = { primitive = "world_apron" },
-      }, context())
+      renderer:mesh(mesh_command("mesh.limit.vertices", {
+        primitive = "world_apron",
+        width = 32,
+        depth = 32,
+        skirtDepth = 128,
+      }), context())
     end, "vertex limit")
+  end)
+
+  T.test("rejects every draw kind after disposal without allocation", function()
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    T.equal(renderer:mesh(mesh_command("mesh.before.dispose", {
+      primitive = "plane", width = 2, depth = 2,
+    }), context()), true)
+    T.equal(#voxel.meshes, 1)
+    T.truthy(renderer:dispose())
+    T.equal(voxel.meshes[1].releases, 1)
+    T.equal(renderer:status().cacheEntries, 0)
+    T.equal(renderer:status().cacheBytes, 0)
+
+    local calls = {
+      function()
+        return renderer:mesh(mesh_command("mesh.after.dispose", {
+          primitive = "plane", width = 3, depth = 3,
+        }), context())
+      end,
+      function()
+        return renderer:instances(instances_command(
+          "instances.after.dispose",
+          { primitive = "box", width = 1, height = 1, depth = 1 },
+          { { x = 0, y = 0, z = 0 } }
+        ), context())
+      end,
+      function()
+        return renderer:billboards(billboards_command(
+          "billboards.after.dispose",
+          { { x = 0, y = 0, z = 0 } }
+        ), context())
+      end,
+    }
+    for _, call in ipairs(calls) do
+      local result, draw_error = call()
+      T.falsy(result)
+      T.truthy(tostring(draw_error):find("disposed", 1, true))
+      T.equal(#voxel.meshes, 1)
+      T.equal(renderer:status().cacheEntries, 0)
+      T.equal(renderer:status().cacheBytes, 0)
+    end
   end)
 
   T.test("scopes translucent depth writes and restores host draw state", function()

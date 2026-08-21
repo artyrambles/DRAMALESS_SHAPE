@@ -2,8 +2,10 @@
 --
 -- Commands remain owned by the extension. This adapter either draws an
 -- extension-owned mesh immediately or builds a host-owned, bounded mesh from
--- declarative geometry. Host-owned meshes are released on eviction,
--- invalidation, and disposal. No command table is changed.
+-- declarative geometry. A cost-aware LRU uses copied string keys and content
+-- digests; it never retains a command table or borrowed resource. Host-owned
+-- meshes are released on eviction, invalidation, and disposal. No command
+-- table is changed.
 
 local V = ...
 
@@ -11,11 +13,24 @@ local Renderer = {}
 Renderer.__index = Renderer
 
 local DEFAULT_MAX_CACHE = 128
+local DEFAULT_MAX_CACHE_BYTES = 48 * 1024 * 1024
 local DEFAULT_MAX_ITEMS = 2048
 local DEFAULT_MAX_VERTICES = 196608
 local MAX_CACHE = 512
+local MAX_CACHE_BYTES = 256 * 1024 * 1024
 local MAX_ITEMS = 8192
 local MAX_VERTICES = 786432
+local VERTEX_BYTES = 24
+local INDEX_BYTES = 4
+local MESH_OVERHEAD_BYTES = 256
+
+local CACHE_KEY_PATTERN = "^[A-Za-z0-9%._:%-]+$"
+local SKIP_RESOURCE_FIELD = {
+  texture = true,
+  mesh = true,
+  resource = true,
+  model = true,
+}
 
 local FACE_SHADE = { 0.84, 0.72, 1.00, 0.55, 0.90, 0.68 }
 
@@ -53,6 +68,100 @@ local function dense_array(value, name, limit)
     if value[index] == nil then error(name .. " must be a dense array", 3) end
   end
   return count
+end
+
+local function cache_key(command)
+  local key = command and command.cacheKey
+  if type(key) ~= "string" or #key < 1 or #key > 64
+      or not key:match(CACHE_KEY_PATTERN) then
+    return nil, "draw command.cacheKey must be 1-64 safe ASCII characters"
+  end
+  return key
+end
+
+-- Hash only bounded declarative data. Opaque extension resources are borrowed
+-- for one callback, so the host must not inspect, retain, hash, or release them.
+-- Four independent 32-bit streams make accidental cache-key collisions fail
+-- closed without retaining the extension command graph.
+local function content_signature(command, context)
+  local h1, h2, h3, h4 = 5381, 2166136261, 2246822519, 3266489917
+  local bytes, nodes = 0, 0
+
+  local function feed(text)
+    text = tostring(text)
+    bytes = bytes + #text
+    if bytes > 256 * 1024 then error("draw command exceeds signature byte limit", 3) end
+    for index = 1, #text do
+      local byte = text:byte(index)
+      h1 = (h1 * 33 + byte) % 4294967296
+      h2 = (h2 * 65599 + byte) % 4294967296
+      h3 = (h3 * 131 + byte) % 4294967296
+      h4 = (h4 * 257 + byte) % 4294967296
+    end
+  end
+
+  local walk
+  walk = function(value, depth, command_root)
+    nodes = nodes + 1
+    if nodes > 32768 then error("draw command exceeds signature node limit", 3) end
+    if depth > 16 then error("draw command exceeds signature depth limit", 3) end
+    local kind = type(value)
+    if kind == "nil" then
+      feed("n;")
+    elseif kind == "boolean" then
+      feed(value and "b1;" or "b0;")
+    elseif kind == "number" then
+      feed("d" .. string.format("%.17g", finite(value, "signature number")) .. ";")
+    elseif kind == "string" then
+      feed("s" .. #value .. ":" .. value .. ";")
+    elseif kind == "table" then
+      if getmetatable(value) ~= nil then error("draw command data must be plain tables", 3) end
+      local keys = {}
+      for key in pairs(value) do
+        if not (command_root and SKIP_RESOURCE_FIELD[key]) then
+          local key_kind = type(key)
+          if key_kind ~= "string" and key_kind ~= "number" then
+            error("draw command data has an unsupported key type", 3)
+          end
+          keys[#keys + 1] = key
+        end
+      end
+      table.sort(keys, function(a, b)
+        local ak, bk = type(a), type(b)
+        if ak ~= bk then return ak < bk end
+        return a < b
+      end)
+      feed("{")
+      for index = 1, #keys do
+        local key = keys[index]
+        walk(key, depth + 1, false)
+        walk(value[key], depth + 1, false)
+      end
+      feed("}")
+    else
+      error("draw command data contains an unsupported value", 3)
+    end
+  end
+
+  walk(command, 0, true)
+  local world = context and context.world or {}
+  local map = context and context.map or {}
+  local tileset = map.tileset or {}
+  feed("|host-context|")
+  for _, value in ipairs({
+    world.key or world.id or "world",
+    world.atlasRevision or 0,
+    world.width or 1,
+    world.height or 1,
+    world.cellSize or 16,
+    tileset.id or "tileset",
+    tileset.tilesPerRow or 16,
+    tileset.imageWidth or 128,
+    tileset.imageHeight or 48,
+  }) do
+    walk(value, 0, false)
+  end
+  return string.format("%08x%08x%08x%08x:%d:%d", h1, h2, h3, h4, bytes, nodes)
 end
 
 local function hash_text(value)
@@ -371,9 +480,17 @@ function Renderer.new(options)
     _mat4 = options.mat4 or V.require("Mat4"),
     _graphics = options.graphics or (love and love.graphics),
     _max_cache = bounded_integer(options.max_cache_entries, DEFAULT_MAX_CACHE, 1, MAX_CACHE),
+    _max_cache_bytes = bounded_integer(
+      options.max_cache_bytes,
+      DEFAULT_MAX_CACHE_BYTES,
+      1024,
+      MAX_CACHE_BYTES
+    ),
     _max_items = bounded_integer(options.max_items, DEFAULT_MAX_ITEMS, 1, MAX_ITEMS),
     _max_vertices = bounded_integer(options.max_vertices, DEFAULT_MAX_VERTICES, 24, MAX_VERTICES),
     _cache = {},
+    _cache_count = 0,
+    _cache_bytes = 0,
     _cache_sequence = 0,
     _disposed = false,
     _translucent = false,
@@ -386,60 +503,72 @@ function Renderer:_release(entry)
   if entry then entry.mesh = nil end
 end
 
-function Renderer:_evictIfNeeded()
-  local count = 0
-  for _ in pairs(self._cache) do count = count + 1 end
-  if count < self._max_cache then return end
-  local oldest_command, oldest_entry
-  for command, entry in pairs(self._cache) do
-    if not oldest_entry or entry.last < oldest_entry.last then
-      oldest_command, oldest_entry = command, entry
+function Renderer:_remove(key)
+  local entry = self._cache[key]
+  if not entry then return false end
+  self._cache[key] = nil
+  self._cache_count = math.max(0, self._cache_count - 1)
+  self._cache_bytes = math.max(0, self._cache_bytes - (entry.cost or 0))
+  self:_release(entry)
+  return true
+end
+
+function Renderer:_evictFor(cost)
+  while self._cache_count >= self._max_cache
+      or self._cache_bytes + cost > self._max_cache_bytes do
+    local oldest_key, oldest_entry
+    for key, entry in pairs(self._cache) do
+      if not oldest_entry or entry.last < oldest_entry.last then
+        oldest_key, oldest_entry = key, entry
+      end
     end
-  end
-  if oldest_entry then
-    self:_release(oldest_entry)
-    self._cache[oldest_command] = nil
+    if not oldest_entry then return end
+    self:_remove(oldest_key)
   end
 end
 
-function Renderer:_cached(command, signature, build)
+function Renderer:_cached(command, context, build)
+  if self._disposed then return nil, "Voxel Companion renderer is disposed" end
+  local key, key_error = cache_key(command)
+  if not key then return nil, key_error end
+  local signature = content_signature(command, context)
   self._cache_sequence = self._cache_sequence + 1
-  local entry = self._cache[command]
-  if entry and entry.signature == signature and entry.mesh then
+  local entry = self._cache[key]
+  if entry then
+    if entry.signature ~= signature then
+      return nil, "draw cache key content collision"
+    end
+    if not entry.mesh then return nil, "draw cache entry has no mesh" end
     entry.last = self._cache_sequence
     return entry.mesh
   end
-  if entry then
-    self:_release(entry)
-    self._cache[command] = nil
-  end
-  self:_evictIfNeeded()
-  local mesh, err = build()
+
+  local mesh, err, cost = build()
   if not mesh then return nil, err end
-  self._cache[command] = {
+  cost = bounded_integer(cost, MESH_OVERHEAD_BYTES, 1, MAX_CACHE_BYTES + 1)
+  if cost > self._max_cache_bytes then
+    self:_release({ mesh = mesh })
+    return nil, "declarative mesh exceeds host cache byte limit"
+  end
+  self:_evictFor(cost)
+  self._cache[key] = {
     mesh = mesh,
     signature = signature,
     last = self._cache_sequence,
+    cost = cost,
   }
+  self._cache_count = self._cache_count + 1
+  self._cache_bytes = self._cache_bytes + cost
   return mesh
 end
 
 function Renderer:_finish(builder)
   if #builder.vertices == 0 then return nil, "declarative draw produced no geometry" end
+  local vertex_count, index_count = #builder.vertices, #builder.indices
   local mesh = self._voxel3d.newMesh(builder.vertices, builder.indices)
   if not mesh then return nil, "host could not allocate a declarative mesh" end
-  return mesh
-end
-
-function Renderer:_signature(kind, command, context, material)
-  local world = context.world or {}
-  return table.concat({
-    kind,
-    tostring(world.key or world.id or "world"),
-    tostring(world.atlasRevision or "0"),
-    material.id,
-    tostring(command.geometry or command.prototype or command.items or command.procedural),
-  }, "\31")
+  local cost = MESH_OVERHEAD_BYTES + vertex_count * VERTEX_BYTES + index_count * INDEX_BYTES
+  return mesh, nil, cost
 end
 
 function Renderer:_setMaterial(material)
@@ -461,7 +590,7 @@ function Renderer:_submit(mesh, material, model)
   self:_setMaterial(material)
   self._voxel3d.draw(mesh, material.texture, model)
   self:_restoreMaterial()
-  return 1
+  return true
 end
 
 function Renderer:resolveMaterial(material, context)
@@ -476,14 +605,14 @@ function Renderer:resolveMaterial(material, context)
 end
 
 function Renderer:mesh(command, context)
+  if self._disposed then return nil, "Voxel Companion renderer is disposed" end
   if type(command) ~= "table" then return nil, "mesh command must be a table" end
   local material = material_info(command, context or {})
   local resource = command.mesh or command.resource
   if resource ~= nil then
     return self:_submit(resource, material, command.model)
   end
-  local signature = self:_signature("mesh", command, context or {}, material)
-  local mesh, err = self:_cached(command, signature, function()
+  local mesh, err = self:_cached(command, context or {}, function()
     local builder = new_builder(material.uv, self._max_vertices)
     emit_mesh_geometry(builder, command.geometry, context or {})
     return self:_finish(builder)
@@ -493,12 +622,12 @@ function Renderer:mesh(command, context)
 end
 
 function Renderer:instances(command, context)
+  if self._disposed then return nil, "Voxel Companion renderer is disposed" end
   if type(command) ~= "table" then return nil, "instances command must be a table" end
   local count = dense_array(command.items, "instances.items", self._max_items)
   if count == 0 then return true end
   local material = material_info(command, context or {})
-  local signature = self:_signature("instances", command, context or {}, material)
-  local mesh, err = self:_cached(command, signature, function()
+  local mesh, err = self:_cached(command, context or {}, function()
     local builder = new_builder(material.uv, self._max_vertices)
     for index = 1, count do emit_prototype(builder, command.prototype, command.items[index], context or {}) end
     return self:_finish(builder)
@@ -508,14 +637,14 @@ function Renderer:instances(command, context)
 end
 
 function Renderer:billboards(command, context)
+  if self._disposed then return nil, "Voxel Companion renderer is disposed" end
   if type(command) ~= "table" then return nil, "billboards command must be a table" end
   context = context or {}
   local items = command.items or procedural_items(command, context, self._max_items)
   local count = dense_array(items, "billboards.items", self._max_items)
   if count == 0 then return true end
   local material = material_info(command, context)
-  local signature = self:_signature("billboards", command, context, material)
-  local mesh, err = self:_cached(command, signature, function()
+  local mesh, err = self:_cached(command, context, function()
     local builder = new_builder(material.uv, self._max_vertices)
     for index = 1, count do
       local item = items[index]
@@ -546,10 +675,12 @@ function Renderer:endPhase()
 end
 
 function Renderer:invalidate()
-  for command, entry in pairs(self._cache) do
+  for key, entry in pairs(self._cache) do
     self:_release(entry)
-    self._cache[command] = nil
+    self._cache[key] = nil
   end
+  self._cache_count = 0
+  self._cache_bytes = 0
   return true
 end
 
@@ -561,11 +692,11 @@ function Renderer:dispose()
 end
 
 function Renderer:status()
-  local count = 0
-  for _ in pairs(self._cache) do count = count + 1 end
   return {
-    cacheEntries = count,
+    cacheEntries = self._cache_count,
     maxCacheEntries = self._max_cache,
+    cacheBytes = self._cache_bytes,
+    maxCacheBytes = self._max_cache_bytes,
     maxItems = self._max_items,
     maxVertices = self._max_vertices,
     disposed = self._disposed,
