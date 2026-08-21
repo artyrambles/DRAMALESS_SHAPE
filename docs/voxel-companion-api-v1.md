@@ -524,8 +524,10 @@ On a fault, the reference dispatcher:
 Diagnostics are bounded by `max_errors`, which defaults to 64. Public copies
 are available through `dispatcher:errors()` and `dispatcher:status()`.
 
-The dispatcher does not allow reentrant dispatch or registration during a
-callback. This prevents unstable order and recursive host rendering.
+The dispatcher keeps its reentrancy guard active through fault cleanup. No
+callback, including a fault-triggered `dispose`, can reenter dispatch,
+registration, or dispatcher disposal. This prevents unstable order, recursive
+host rendering, and one failed extension from disposing other extensions.
 
 ## Handle contract
 

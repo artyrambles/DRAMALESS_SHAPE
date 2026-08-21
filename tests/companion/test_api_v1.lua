@@ -74,6 +74,30 @@ return function(T)
     return dispatcher, services
   end
 
+  local function attempt_cleanup_reentry(dispatcher, id)
+    local attempts = {}
+    attempts.dispatch, attempts.dispatchError = dispatcher:dispatch("update", {})
+    attempts.register, attempts.registerError = dispatcher:register({
+      api = 1,
+      id = "cleanup.reentry." .. id,
+      lifecycle = { start = function() end },
+    }, {})
+    attempts.dispose, attempts.disposeError = dispatcher:dispose({}, "cleanup-reentry")
+    return attempts
+  end
+
+  local function expect_cleanup_reentry_blocked(attempts)
+    T.falsy(attempts.dispatch)
+    T.truthy(type(attempts.dispatchError) == "string"
+      and attempts.dispatchError:match("reentrant dispatch"))
+    T.falsy(attempts.register)
+    T.truthy(type(attempts.registerError) == "string"
+      and attempts.registerError:match("register during dispatch"))
+    T.falsy(attempts.dispose)
+    T.truthy(type(attempts.disposeError) == "string"
+      and attempts.disposeError:match("dispose during dispatch"))
+  end
+
   T.test("exports stable v1 constants", function()
     local API = load_api()
     T.equal(API.VERSION, 1)
@@ -615,6 +639,76 @@ return function(T)
     T.truthy(handle, err)
     T.truthy(handle:is_active())
     T.deepEqual(calls, { "attach", "running" })
+  end)
+
+  T.test("hot attach fault cleanup cannot reenter or dispose the dispatcher", function()
+    local API = load_api()
+    local dispatcher = new_running(API, {})
+    local attempts
+    local handle, err = dispatcher:register({
+      api = 1,
+      id = "fault.guard.hot.attach",
+      lifecycle = {
+        attach = function() error("expected hot attach fault") end,
+        dispose = function()
+          attempts = attempt_cleanup_reentry(dispatcher, "hot.attach")
+        end,
+      },
+    }, {})
+    T.truthy(handle, err)
+    T.truthy(handle:status().faulted)
+    expect_cleanup_reentry_blocked(attempts)
+    T.equal(dispatcher:status().state, "running")
+    local disposed, disposeError = dispatcher:dispose({}, "test-end")
+    T.truthy(disposed, disposeError)
+  end)
+
+  T.test("hot start fault cleanup cannot reenter or dispose the dispatcher", function()
+    local API = load_api()
+    local dispatcher = new_running(API, {})
+    local attempts
+    local handle, err = dispatcher:register({
+      api = 1,
+      id = "fault.guard.hot.start",
+      lifecycle = {
+        start = function() error("expected hot start fault") end,
+        dispose = function()
+          attempts = attempt_cleanup_reentry(dispatcher, "hot.start")
+        end,
+      },
+    }, {})
+    T.truthy(handle, err)
+    T.truthy(handle:status().faulted)
+    expect_cleanup_reentry_blocked(attempts)
+    T.equal(dispatcher:status().state, "running")
+    local disposed, disposeError = dispatcher:dispose({}, "test-end")
+    T.truthy(disposed, disposeError)
+  end)
+
+  T.test("handle invalidate fault cleanup cannot reenter or dispose the dispatcher", function()
+    local API = load_api()
+    local dispatcher = new_running(API, {})
+    local attempts
+    local handle, err = dispatcher:register({
+      api = 1,
+      id = "fault.guard.handle.invalidate",
+      lifecycle = {
+        invalidate = function() error("expected handle invalidate fault") end,
+        dispose = function()
+          attempts = attempt_cleanup_reentry(dispatcher, "handle.invalidate")
+        end,
+      },
+    }, {})
+    T.truthy(handle, err)
+    local invalidated, invalidateError = handle:invalidate({}, "test")
+    T.falsy(invalidated)
+    T.truthy(type(invalidateError) == "string"
+      and invalidateError:match("expected handle invalidate fault"))
+    T.truthy(handle:status().faulted)
+    expect_cleanup_reentry_blocked(attempts)
+    T.equal(dispatcher:status().state, "running")
+    local disposed, disposeError = dispatcher:dispose({}, "test-end")
+    T.truthy(disposed, disposeError)
   end)
 
   T.test("dispatches phases in priority and id order", function()

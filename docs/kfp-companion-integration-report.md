@@ -12,7 +12,7 @@ published.
 - Manifest change: none
 - External push or pull request: none
 - Frozen dispatcher hash:
-  `7860E9A628F65B0252250F5EE564DB99E7D2C34415BBA82BB4380A6C6588E58C`
+  `864DA19493F773A52FB2111EFC02D79E9882B87C5A762AF5B124326A74A32B33`
 
 The official `voxel` pipeline still owns `drawWorld`. The integration adds
 callbacks inside that pass and exports `mod.exports.voxel_companion` only after
@@ -82,7 +82,7 @@ From the repository root:
 
 ```text
 luajit tools/run_tests.lua
-60 passed, 0 failed, 60 selected (4 files)
+63 passed, 0 failed, 63 selected (4 files)
 
 luajit -e "assert(loadfile(...))"
 syntax ok

@@ -1638,11 +1638,14 @@ end
 
 function Dispatcher:_fault(record, stage, message, source)
   if record.faulted or record.state == "disposed" then return record.fault end
+  local owns_guard = self._dispatch_depth == 0
+  if owns_guard then self._dispatch_depth = 1 end
   record.active = false
   record.faulted = true
   record.state = "faulted"
   record.fault = self:_append_error(record, stage, message)
   self:_invoke_dispose(record, source or {}, "fault", true)
+  if owns_guard then self:_leave() end
   return record.fault
 end
 
@@ -1813,7 +1816,6 @@ function Dispatcher:register(spec, running_context)
       self._dispatch_depth = self._dispatch_depth + 1
       local result
       result, err = self:_invoke(record, record.id .. ".attach", handler, self._services)
-      self._dispatch_depth = self._dispatch_depth - 1
       if not result then
         self:_fault(record, "attach", err, self._services)
       else
@@ -1825,6 +1827,7 @@ function Dispatcher:register(spec, running_context)
         end
         if not record.faulted then record.attached = true end
       end
+      self:_leave()
     else
       record.attached = true
     end
@@ -1836,7 +1839,6 @@ function Dispatcher:register(spec, running_context)
       self._dispatch_depth = self._dispatch_depth + 1
       local result
       result, err = self:_invoke(record, record.id .. ".start", handler, running_context)
-      self._dispatch_depth = self._dispatch_depth - 1
       if not result then
         self:_fault(record, "start", err, running_context)
       else
@@ -1847,6 +1849,7 @@ function Dispatcher:register(spec, running_context)
           end
         end
       end
+      self:_leave()
     end
     if not record.faulted then
       record.started = true
@@ -2298,18 +2301,20 @@ function Handle:invalidate(context, reason)
     context,
     reason
   )
-  dispatcher._dispatch_depth = dispatcher._dispatch_depth - 1
   if not result then
     dispatcher:_fault(record, "invalidate", err, context)
+    dispatcher:_leave()
     return nil, err
   end
   for i = 1, result.n do
     if result[i] ~= nil then
       err = "lifecycle.invalidate must not return a value"
       dispatcher:_fault(record, "invalidate", err, context)
+      dispatcher:_leave()
       return nil, err
     end
   end
+  dispatcher:_leave()
   return true
 end
 
