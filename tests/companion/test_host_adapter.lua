@@ -442,7 +442,7 @@ return function(T)
       T.truthy(env.host:endWorldFrame("fixture-pass-" .. pass))
     end
 
-    T.equal(fixture.commandCount, 19)
+    T.equal(fixture.commandCount, 23)
     T.equal(#fixture.instancePrimitives, 15)
     T.equal(#voxel.meshes, fixture.commandCount)
     T.equal(voxel.draws, fixture.commandCount * 2)

@@ -1,4 +1,4 @@
--- Shared ROM-free golden fixture for the Voxel Companion draw schema v1.
+-- Shared ROM-free golden fixture for the complete Voxel Companion draw schema v1.
 
 local INSTANCE_PRIMITIVES = {
   "box", "plane", "door_frame", "window", "poster", "rail", "fixture",
@@ -68,6 +68,27 @@ add("background", {
     width = 16, depth = 16 },
 })
 
+add("background", {
+  kind = "mesh",
+  material = "golden:panorama",
+  texture = GOLDEN_TEXTURE,
+  geometry = { primitive = "panorama", sourceWidth = 4096,
+    targetWidth = 2048, deepSkirt = true, distanceHaze = true },
+})
+
+add("background", {
+  kind = "mesh",
+  material = "golden:clouds",
+  geometry = { primitive = "cloud_layer", layer = 2, parallax = 0.2,
+    density = 0.6, seed = 42 },
+})
+
+add("background", {
+  kind = "mesh",
+  material = "golden:rainbow",
+  geometry = { primitive = "rainbow", seed = 43 },
+})
+
 add("opaque_after_terrain", {
   kind = "mesh",
   material = "golden:apron",
@@ -95,9 +116,23 @@ add("translucent_after_actors", {
   },
 })
 
+add("background", {
+  kind = "billboards",
+  material = "golden:stars",
+  procedural = {
+    kind = "stars",
+    count = 24,
+    seed = 44,
+    twinkle = true,
+    nebula = true,
+    shootingStars = true,
+  },
+})
+
 return {
   schemaVersion = 1,
   context = {
+    phase = "background",
     world = {
       id = "golden",
       key = "golden",

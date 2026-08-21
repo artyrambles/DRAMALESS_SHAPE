@@ -67,9 +67,10 @@ the read-only legacy check succeeds.
 - Declarative meshes use safe 64-byte cache keys, reject content or context
   collisions, and use a byte-bounded LRU. The default byte budget is 48 MiB
   and the hard maximum is 256 MiB.
-- The shared ROM-free baseline fixture executes all three portable mesh
-  primitives, all 15 common instance primitives, and explicit billboards
-  through both the adapter and real renderer. A second pass proves cache reuse.
+- The shared ROM-free baseline fixture executes all six mesh primitives, all
+  15 instance primitives, explicit billboards, and deterministic procedural
+  stars through both the adapter and real renderer. A second pass proves cache
+  reuse.
 - A disposed renderer rejects all draw kinds without allocation or cache state.
 - The legacy marker check reads only. It does not clean or migrate a file.
 - The release package contains the API, adapter, renderer, and public contract.
