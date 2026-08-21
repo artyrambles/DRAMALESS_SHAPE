@@ -57,6 +57,54 @@ local CamControl = V.require("CamControl")
 local Quality = V.require("Quality")
 local PoisonFlash = V.require("PoisonFlash")
 
+-- Voxel Companion API v1 is an adapter inside this existing pipeline. It does
+-- not register another drawWorld callback and does not replace this host's
+-- terrain, camera, or renderer ownership. A known legacy KFP source marker
+-- makes Host.new refuse the export without changing the marked file.
+local companion
+do
+  local CompanionHost = V.require("VoxelCompanionHost")
+  local ok, value, err = pcall(CompanionHost.new, {
+    mod = mod,
+    host_id = "DRAMALESS_SHAPE",
+    host_version = mod.exports.version,
+    ground_at = VoxelScene.groundAt,
+  })
+  if ok and value then
+    companion = value
+    mod.exports.voxel_companion = companion:provider()
+    VoxelScene.setCompanion(companion)
+    V.log:event("integration", "voxel-companion-api-ready", {
+      api = 1,
+      phases = "background,opaque_after_terrain,translucent_after_actors",
+    })
+  else
+    mod.exports.voxel_companion = nil
+    V.log:event("integration", "voxel-companion-api-refused", {
+      error = tostring(ok and err or value),
+    })
+  end
+end
+
+local function companionCall(name, ...)
+  if not companion then return nil end
+  local method = companion[name]
+  if type(method) ~= "function" then return nil end
+  local ok, first, second = pcall(method, companion, ...)
+  if not ok or (first == nil and second ~= nil) then
+    V.log:event("integration", "voxel-companion-api-call-failed", {
+      call = name,
+      error = tostring(ok and second or first),
+    })
+    return nil, ok and second or first
+  end
+  return first, second
+end
+
+mod.events:on("game.ready", function(payload)
+  companionCall("setGame", payload and payload.game)
+end)
+
 local applyFull
 
 local function sceneSize(ctx)
@@ -92,6 +140,7 @@ mod.content.render_pipelines:register("voxel", {
     if not Voxel.active() then return end
     local Game = require("src.core.Game")
     local ow = Game and Game.overworld
+    companionCall("update", dt, level, ow)
     if ow and ow.map and ow.camera then
       pcall(VoxelScene.prefetch, ow)
       pcall(VoxelPrecache.update, Game)
@@ -123,6 +172,7 @@ mod.content.render_pipelines:register("voxel", {
     return AntiAlias.resolve(canvas, sw, sh, "world")
   end,
   invalidate = function()
+    companionCall("invalidate", "graphics")
     Voxel3D.invalidate()
     AntiAlias.invalidate()
     VoxelLoadingVeil.invalidate()
@@ -341,6 +391,7 @@ end)
 mod.events:on("world.block_replaced", function(payload)
   local mapId = payload and (payload.mapId or (payload.map and payload.map.id))
   if mapId then
+    companionCall("markWorldDirty", "world.block_replaced")
     ChunkMesher.refresh(mapId)
     V.log:event("mesh", "block-refresh", { map = mapId })
   end
@@ -362,9 +413,14 @@ do
 end
 
 mod.events:on("map.reloaded", function(payload)
+  companionCall("markWorldDirty", "map.reloaded")
   if payload and payload.reason == "colors" then return end
   local mapId = payload and (payload.mapId or (payload.map and payload.map.id))
   if mapId then ChunkMesher.invalidate(mapId) end
+end)
+
+mod.events:on("world.object_toggled", function()
+  companionCall("markWorldDirty", "world.object_toggled")
 end)
 
 do
