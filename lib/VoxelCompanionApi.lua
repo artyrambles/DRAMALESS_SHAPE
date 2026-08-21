@@ -313,6 +313,44 @@ local function pack(...)
   return { n = select("#", ...), ... }
 end
 
+local function safe_error_text(problem)
+  local kind = type(problem)
+  local message
+  if kind == "string" then
+    message = problem
+  elseif kind == "number" or kind == "boolean" then
+    message = tostring(problem)
+  else
+    message = "error value of type " .. kind
+  end
+  if #message > MAX_ERROR_MESSAGE_LENGTH then
+    message = message:sub(1, MAX_ERROR_MESSAGE_LENGTH - 14) .. "...[truncated]"
+  end
+  return message
+end
+
+local function traceback_error(problem)
+  local message = safe_error_text(problem)
+  if debug and debug.traceback then return debug.traceback(message, 2) end
+  return message
+end
+
+local function safe_key_label(key)
+  local kind = type(key)
+  if kind == "string" then
+    local value = key
+    if #value > 128 then value = value:sub(1, 128) .. "...[truncated]" end
+    return value
+  end
+  if kind == "number" then return tostring(key) end
+  if kind == "boolean" then return key and "true" or "false" end
+  return "<" .. kind .. " key>"
+end
+
+local function safe_key_path(key)
+  return "[" .. safe_key_label(key) .. "]"
+end
+
 local function copy_array(values)
   local out = {}
   for i = 1, #values do out[i] = values[i] end
@@ -329,7 +367,7 @@ end
 local function validate_known_keys(value, allowed, path)
   for key in pairs(value) do
     if not allowed[key] then
-      return nil, ("%s has unknown field %q"):format(path, tostring(key))
+      return nil, ("%s has unknown field %s"):format(path, safe_key_label(key))
     end
   end
   return true
@@ -422,7 +460,7 @@ local function clone_declarative(value, path, state, depth)
 
     local cloned, err = clone_declarative(
       item,
-      path .. "[" .. tostring(key) .. "]",
+      path .. safe_key_path(key),
       state,
       depth + 1
     )
@@ -520,11 +558,11 @@ local function validate_no_resource_locator(value, path, active)
   for key, item in pairs(value) do
     if locator_field(key) then
       active[value] = nil
-      return nil, path .. " contains forbidden resource locator field " .. tostring(key)
+      return nil, path .. " contains forbidden resource locator field " .. safe_key_label(key)
     end
     local ok, err = validate_no_resource_locator(
       item,
-      path .. "[" .. tostring(key) .. "]",
+      path .. safe_key_path(key),
       active
     )
     if not ok then active[value] = nil; return nil, err end
@@ -589,7 +627,7 @@ local function validate_schema_table(value, schemas, path, state)
   end
   local schema = schemas[primitive]
   if not schema then
-    return nil, path .. ".primitive is not in the API v1 baseline: " .. tostring(primitive)
+    return nil, path .. ".primitive is not in the API v1 baseline: " .. primitive
   end
   local allowed = {}
   for key in pairs(schema.fields) do allowed[key] = true end
@@ -691,10 +729,11 @@ local function validate_draw_common(command, expected_kind)
   end
   local kind = command.kind
   if not DRAW_KIND_SET[kind] then
-    return nil, "draw command.kind is not in the API v1 baseline: " .. tostring(kind)
+    return nil, "draw command.kind is not in the API v1 baseline: " .. safe_key_label(kind)
   end
   if expected_kind ~= nil and expected_kind ~= kind then
-    return nil, ("draw.%s received a %s command"):format(tostring(expected_kind), tostring(kind))
+    return nil, ("draw.%s received a %s command")
+      :format(safe_key_label(expected_kind), safe_key_label(kind))
   end
   local allowed = kind == "mesh" and MESH_COMMAND_KEYS
     or (kind == "instances" and INSTANCES_COMMAND_KEYS or BILLBOARDS_COMMAND_KEYS)
@@ -879,8 +918,8 @@ local function borrowed_view(source, label)
       rawset(proxy, key, nil)
     end
     if dirty_key ~= nil then
-      return nil, ("%s was changed with rawset at field %q")
-        :format(label, tostring(dirty_key))
+      return nil, ("%s was changed with rawset at field %s")
+        :format(label, safe_key_label(dirty_key))
     end
     return true
   end
@@ -1036,10 +1075,12 @@ local function normalize_spec(spec, host_capabilities)
   end
   if spec.attach then lifecycle.attach = spec.attach end
   if spec.invalidate then
-    lifecycle.invalidate = function(_, reason) return spec.invalidate(reason) end
+    local invalidate = spec.invalidate
+    lifecycle.invalidate = function(_, reason) return invalidate(reason) end
   end
   if spec.dispose then
-    lifecycle.dispose = function() return spec.dispose() end
+    local dispose = spec.dispose
+    lifecycle.dispose = function() return dispose() end
   end
 
   local phases = {}
@@ -1242,12 +1283,45 @@ local function validate_camera_result(value)
   }
 end
 
+local function merge_camera_result(aggregate, contribution)
+  local merged = {
+    positionDelta = {
+      x = aggregate.positionDelta.x + contribution.positionDelta.x,
+      y = aggregate.positionDelta.y + contribution.positionDelta.y,
+      z = aggregate.positionDelta.z + contribution.positionDelta.z,
+    },
+    rotationDelta = {
+      yaw = aggregate.rotationDelta.yaw + contribution.rotationDelta.yaw,
+      pitch = aggregate.rotationDelta.pitch + contribution.rotationDelta.pitch,
+      roll = aggregate.rotationDelta.roll + contribution.rotationDelta.roll,
+    },
+    fovDelta = aggregate.fovDelta + contribution.fovDelta,
+  }
+  for _, value in ipairs({
+    merged.positionDelta.x,
+    merged.positionDelta.y,
+    merged.positionDelta.z,
+    merged.rotationDelta.yaw,
+    merged.rotationDelta.pitch,
+    merged.rotationDelta.roll,
+    merged.fovDelta,
+  }) do
+    if not is_finite(value) then
+      return nil, "camera contribution would make the aggregate non-finite"
+    end
+  end
+  return merged
+end
+
 local function patch_entry_key(entry, path, allow_string)
   if allow_string and type(entry) == "string" and entry ~= "" then
     return entry
   end
   if type(entry) ~= "table" then
     return nil, path .. " must be a table with a non-empty key"
+  end
+  if getmetatable(entry) ~= nil then
+    return nil, path .. " must be a plain table with a non-empty key"
   end
   if type(entry.key) ~= "string" or entry.key == "" then
     return nil, path .. ".key must be a non-empty string"
@@ -1484,10 +1558,7 @@ function Dispatcher:_log(event)
 end
 
 function Dispatcher:_append_error(record, stage, message)
-  message = tostring(message)
-  if #message > MAX_ERROR_MESSAGE_LENGTH then
-    message = message:sub(1, MAX_ERROR_MESSAGE_LENGTH - 14) .. "...[truncated]"
-  end
+  message = safe_error_text(message)
   self._error_sequence = self._error_sequence + 1
   local fault = {
     sequence = self._error_sequence,
@@ -1533,12 +1604,7 @@ function Dispatcher:_invoke(record, stage, handler, source, ...)
   local function run()
     return pack(handler(context, unpack(extra, 1, extra.n)))
   end
-  local ok, result = xpcall(run, function(problem)
-    if debug and debug.traceback then
-      return debug.traceback(tostring(problem), 2)
-    end
-    return tostring(problem)
-  end)
+  local ok, result = xpcall(run, traceback_error)
   local clean, mutation = close()
   if not ok then return nil, result end
   if not clean then return nil, mutation end
@@ -1601,6 +1667,19 @@ end
 
 function Dispatcher:_leave()
   self._dispatch_depth = math.max(0, self._dispatch_depth - 1)
+end
+
+function Dispatcher:_run_dispatch(operation, callback)
+  local entered, err = self:_enter(operation)
+  if not entered then return nil, err end
+
+  local result
+  local ok, problem = xpcall(function()
+    result = pack(callback())
+  end, traceback_error)
+  self:_leave()
+  if not ok then return nil, problem end
+  return unpack(result, 1, result.n)
 end
 
 function Dispatcher:capabilities()
@@ -1829,47 +1908,49 @@ function Dispatcher:start(context)
 end
 
 function Dispatcher:dispatch(phase, context)
-  if not PHASE_SET[phase] then return nil, "unknown phase " .. tostring(phase) end
+  if not PHASE_SET[phase] then return nil, "unknown phase " .. safe_key_label(phase) end
   if type(context) ~= "table" then return nil, "phase context must be a table" end
-  local ok, err = self:_enter("dispatch " .. phase)
-  if not ok then return nil, err end
+  return self:_run_dispatch("dispatch " .. phase, function()
+    local records = self:_handler_records(function(record)
+      return record.phases[phase] ~= nil
+    end)
+    if #records > 0 and RENDER_PHASE_SET[phase] then
+      local valid, validation_error = validate_render_context(context, phase .. " context")
+      if not valid then return nil, validation_error end
+    end
 
-  local records = self:_handler_records(function(record)
-    return record.phases[phase] ~= nil
-  end)
-  if #records > 0 and RENDER_PHASE_SET[phase] then
-    ok, err = validate_render_context(context, phase .. " context")
-    if not ok then self:_leave(); return nil, err end
-  end
-
-  local report = new_report("phase", phase)
-  for _, record in ipairs(records) do
-    if not record.active then
-      report.skipped = report.skipped + 1
-    else
-      report.called = report.called + 1
-      local result
-      result, err = self:_invoke(record, record.id .. "." .. phase, record.phases[phase], context)
-      if not result then
-        self:_fault(record, phase, err, context)
-        report.failed = report.failed + 1
+    local report = new_report("phase", phase)
+    for _, record in ipairs(records) do
+      if not record.active then
+        report.skipped = report.skipped + 1
       else
-        local invalid = false
-        for i = 1, result.n do
-          if result[i] ~= nil then invalid = true break end
-        end
-        if invalid then
-          self:_fault(record, phase, "phase handlers must not return a value", context)
+        report.called = report.called + 1
+        local result, err = self:_invoke(
+          record,
+          record.id .. "." .. phase,
+          record.phases[phase],
+          context
+        )
+        if not result then
+          self:_fault(record, phase, err, context)
           report.failed = report.failed + 1
         else
-          report.succeeded = report.succeeded + 1
-          report.contributors[#report.contributors + 1] = record.id
+          local invalid = false
+          for i = 1, result.n do
+            if result[i] ~= nil then invalid = true break end
+          end
+          if invalid then
+            self:_fault(record, phase, "phase handlers must not return a value", context)
+            report.failed = report.failed + 1
+          else
+            report.succeeded = report.succeeded + 1
+            report.contributors[#report.contributors + 1] = record.id
+          end
         end
       end
     end
-  end
-  self:_leave()
-  return report
+    return report
+  end)
 end
 
 Dispatcher.dispatch_phase = Dispatcher.dispatch
@@ -1886,58 +1967,59 @@ Dispatcher.worldChanged = Dispatcher.world_changed
 
 function Dispatcher:render(phase, context)
   if not RENDER_PHASE_SET[phase] then
-    return nil, "unknown render phase " .. tostring(phase)
+    return nil, "unknown render phase " .. safe_key_label(phase)
   end
   return self:dispatch(phase, context)
 end
 
 function Dispatcher:dispatch_camera(context)
   if type(context) ~= "table" then return nil, "camera context must be a table" end
-  local ok, err = self:_enter("dispatch camera")
-  if not ok then return nil, err end
-  local records = self:_handler_records(function(record) return record.camera ~= nil end)
-
-  local aggregate = {
-    positionDelta = { x = 0, y = 0, z = 0 },
-    rotationDelta = { yaw = 0, pitch = 0, roll = 0 },
-    fovDelta = 0,
-  }
-  local report = new_report("result", "camera")
-  for _, record in ipairs(records) do
-    if not record.active then
-      report.skipped = report.skipped + 1
-    else
-      report.called = report.called + 1
-      local packed
-      packed, err = self:_invoke(record, record.id .. ".camera", record.camera, context)
-      if not packed then
-        self:_fault(record, "camera", err, context)
-        report.failed = report.failed + 1
-      elseif packed.n > 1 then
-        self:_fault(record, "camera", "camera handler must return zero or one value", context)
-        report.failed = report.failed + 1
+  return self:_run_dispatch("dispatch camera", function()
+    local records = self:_handler_records(function(record) return record.camera ~= nil end)
+    local aggregate = {
+      positionDelta = { x = 0, y = 0, z = 0 },
+      rotationDelta = { yaw = 0, pitch = 0, roll = 0 },
+      fovDelta = 0,
+    }
+    local report = new_report("result", "camera")
+    for _, record in ipairs(records) do
+      if not record.active then
+        report.skipped = report.skipped + 1
       else
-        local contribution
-        contribution, err = validate_camera_result(packed[1])
-        if not contribution then
-          self:_fault(record, "camera.result", err, context)
+        report.called = report.called + 1
+        local packed, err = self:_invoke(
+          record,
+          record.id .. ".camera",
+          record.camera,
+          context
+        )
+        if not packed then
+          self:_fault(record, "camera", err, context)
+          report.failed = report.failed + 1
+        elseif packed.n > 1 then
+          self:_fault(record, "camera", "camera handler must return zero or one value", context)
           report.failed = report.failed + 1
         else
-          aggregate.positionDelta.x = aggregate.positionDelta.x + contribution.positionDelta.x
-          aggregate.positionDelta.y = aggregate.positionDelta.y + contribution.positionDelta.y
-          aggregate.positionDelta.z = aggregate.positionDelta.z + contribution.positionDelta.z
-          aggregate.rotationDelta.yaw = aggregate.rotationDelta.yaw + contribution.rotationDelta.yaw
-          aggregate.rotationDelta.pitch = aggregate.rotationDelta.pitch + contribution.rotationDelta.pitch
-          aggregate.rotationDelta.roll = aggregate.rotationDelta.roll + contribution.rotationDelta.roll
-          aggregate.fovDelta = aggregate.fovDelta + contribution.fovDelta
-          report.succeeded = report.succeeded + 1
-          report.contributors[#report.contributors + 1] = record.id
+          local contribution
+          contribution, err = validate_camera_result(packed[1])
+          if contribution then
+            local merged
+            merged, err = merge_camera_result(aggregate, contribution)
+            contribution = merged
+          end
+          if not contribution then
+            self:_fault(record, "camera.result", err, context)
+            report.failed = report.failed + 1
+          else
+            aggregate = contribution
+            report.succeeded = report.succeeded + 1
+            report.contributors[#report.contributors + 1] = record.id
+          end
         end
       end
     end
-  end
-  self:_leave()
-  return aggregate, report
+    return aggregate, report
+  end)
 end
 
 Dispatcher.modify_camera = Dispatcher.dispatch_camera
@@ -1945,113 +2027,112 @@ Dispatcher.modifyCamera = Dispatcher.dispatch_camera
 
 function Dispatcher:dispatch_terrain(context)
   if type(context) ~= "table" then return nil, "terrain context must be a table" end
-  local ok, err = self:_enter("dispatch terrain")
-  if not ok then return nil, err end
-  local records = self:_handler_records(function(record) return record.terrain ~= nil end)
+  return self:_run_dispatch("dispatch terrain", function()
+    local records = self:_handler_records(function(record) return record.terrain ~= nil end)
+    local aggregate = {
+      cacheKey = nil,
+      suppressCells = {},
+      transforms = {},
+      instances = {},
+      tags = {},
+      invalidate = false,
+    }
+    local suppression_owners, transform_owners = {}, {}
+    local cache_parts = {}
+    local cacheable, has_patch_data = true, false
+    local report = new_report("result", "terrain")
+    local err
 
-  local aggregate = {
-    cacheKey = nil,
-    suppressCells = {},
-    transforms = {},
-    instances = {},
-    tags = {},
-    invalidate = false,
-  }
-  local suppression_owners, transform_owners = {}, {}
-  local cache_parts = {}
-  local cacheable, has_patch_data = true, false
-  local report = new_report("result", "terrain")
-
-  for _, record in ipairs(records) do
-    if not record.active then
-      report.skipped = report.skipped + 1
-    else
-      report.called = report.called + 1
-      local packed
-      packed, err = self:_invoke(record, record.id .. ".terrain", record.terrain, context)
-      if not packed then
-        self:_fault(record, "terrain", err, context)
-        report.failed = report.failed + 1
-      elseif packed.n > 1 then
-        self:_fault(record, "terrain", "terrain handler must return zero or one value", context)
-        report.failed = report.failed + 1
+    for _, record in ipairs(records) do
+      if not record.active then
+        report.skipped = report.skipped + 1
       else
-        local contribution
-        contribution, err = validate_terrain_result(packed[1])
-        if contribution then
-          for key in pairs(contribution.suppressionKeys) do
-            if suppression_owners[key] then
-              err = ("suppression key %q is already owned by %s")
-                :format(key, suppression_owners[key])
-              break
-            end
-          end
-        end
-        if contribution and not err then
-          for key in pairs(contribution.transformKeys) do
-            if transform_owners[key] then
-              err = ("transform key %q is already owned by %s")
-                :format(key, transform_owners[key])
-              break
-            end
-          end
-        end
-        if contribution and not err then
-          local merged_items = #aggregate.suppressCells
-            + #aggregate.transforms
-            + #aggregate.instances
-            + #contribution.suppressCells
-            + #contribution.transforms
-            + #contribution.instances
-          if merged_items > MAX_MERGED_PATCH_ITEMS then
-            err = ("merged terrain patch exceeds its %d item limit")
-              :format(MAX_MERGED_PATCH_ITEMS)
-          end
-        end
-
-        if not contribution or err then
-          self:_fault(record, "terrain.result", err or "invalid terrain result", context)
+        report.called = report.called + 1
+        local packed
+        packed, err = self:_invoke(record, record.id .. ".terrain", record.terrain, context)
+        if not packed then
+          self:_fault(record, "terrain", err, context)
+          report.failed = report.failed + 1
+        elseif packed.n > 1 then
+          self:_fault(record, "terrain", "terrain handler must return zero or one value", context)
           report.failed = report.failed + 1
         else
-          for key in pairs(contribution.suppressionKeys) do
-            suppression_owners[key] = record.id
+          local contribution
+          contribution, err = validate_terrain_result(packed[1])
+          if contribution then
+            for key in pairs(contribution.suppressionKeys) do
+              if suppression_owners[key] then
+                err = ("suppression key %q is already owned by %s")
+                  :format(key, suppression_owners[key])
+                break
+              end
+            end
           end
-          for key in pairs(contribution.transformKeys) do
-            transform_owners[key] = record.id
+          if contribution and not err then
+            for key in pairs(contribution.transformKeys) do
+              if transform_owners[key] then
+                err = ("transform key %q is already owned by %s")
+                  :format(key, transform_owners[key])
+                break
+              end
+            end
           end
-          for _, item in ipairs(contribution.suppressCells) do
-            aggregate.suppressCells[#aggregate.suppressCells + 1] = item
+          if contribution and not err then
+            local merged_items = #aggregate.suppressCells
+              + #aggregate.transforms
+              + #aggregate.instances
+              + #contribution.suppressCells
+              + #contribution.transforms
+              + #contribution.instances
+            if merged_items > MAX_MERGED_PATCH_ITEMS then
+              err = ("merged terrain patch exceeds its %d item limit")
+                :format(MAX_MERGED_PATCH_ITEMS)
+            end
           end
-          for _, item in ipairs(contribution.transforms) do
-            aggregate.transforms[#aggregate.transforms + 1] = item
-          end
-          for _, item in ipairs(contribution.instances) do
-            aggregate.instances[#aggregate.instances + 1] = item
-          end
-          for key, value in pairs(contribution.tags) do
-            aggregate.tags[key] = value
-          end
-          aggregate.invalidate = aggregate.invalidate or contribution.invalidate
 
-          if contribution.cacheKey then
-            cache_parts[#cache_parts + 1] = cache_segment(record.id)
-              .. cache_segment(contribution.cacheKey)
-          elseif contribution.hasPatchData or contribution.invalidate then
-            cacheable = false
+          if not contribution or err then
+            self:_fault(record, "terrain.result", err or "invalid terrain result", context)
+            report.failed = report.failed + 1
+          else
+            for key in pairs(contribution.suppressionKeys) do
+              suppression_owners[key] = record.id
+            end
+            for key in pairs(contribution.transformKeys) do
+              transform_owners[key] = record.id
+            end
+            for _, item in ipairs(contribution.suppressCells) do
+              aggregate.suppressCells[#aggregate.suppressCells + 1] = item
+            end
+            for _, item in ipairs(contribution.transforms) do
+              aggregate.transforms[#aggregate.transforms + 1] = item
+            end
+            for _, item in ipairs(contribution.instances) do
+              aggregate.instances[#aggregate.instances + 1] = item
+            end
+            for key, value in pairs(contribution.tags) do
+              aggregate.tags[key] = value
+            end
+            aggregate.invalidate = aggregate.invalidate or contribution.invalidate
+
+            if contribution.cacheKey then
+              cache_parts[#cache_parts + 1] = cache_segment(record.id)
+                .. cache_segment(contribution.cacheKey)
+            elseif contribution.hasPatchData or contribution.invalidate then
+              cacheable = false
+            end
+            has_patch_data = has_patch_data or contribution.hasPatchData
+            report.succeeded = report.succeeded + 1
+            report.contributors[#report.contributors + 1] = record.id
           end
-          has_patch_data = has_patch_data or contribution.hasPatchData
-          report.succeeded = report.succeeded + 1
-          report.contributors[#report.contributors + 1] = record.id
         end
       end
     end
-  end
 
-  if cacheable and #cache_parts > 0 and (has_patch_data or aggregate.invalidate) then
-    aggregate.cacheKey = table.concat(cache_parts, "|")
-  end
-  self:_leave()
-  return aggregate, report
+    if cacheable and #cache_parts > 0 and (has_patch_data or aggregate.invalidate) then
+      aggregate.cacheKey = table.concat(cache_parts, "|")
+    end
+    return aggregate, report
+  end)
 end
 
 Dispatcher.terrain_patch = Dispatcher.dispatch_terrain
@@ -2059,39 +2140,43 @@ Dispatcher.terrainPatch = Dispatcher.dispatch_terrain
 
 function Dispatcher:invalidate(context, reason)
   if type(context) ~= "table" then return nil, "invalidate context must be a table" end
-  local ok, err = self:_enter("invalidate")
-  if not ok then return nil, err end
-  local report = new_report("lifecycle", "invalidate")
-  for _, record in ipairs(copy_array(self._order)) do
-    local handler = record.lifecycle.invalidate
-    if handler then
-      if not record.active then
-        report.skipped = report.skipped + 1
-      else
-        report.called = report.called + 1
-        local result
-        result, err = self:_invoke(record, record.id .. ".invalidate", handler, context, reason)
-        if not result then
-          self:_fault(record, "invalidate", err, context)
-          report.failed = report.failed + 1
+  return self:_run_dispatch("invalidate", function()
+    local report = new_report("lifecycle", "invalidate")
+    for _, record in ipairs(copy_array(self._order)) do
+      local handler = record.lifecycle.invalidate
+      if handler then
+        if not record.active then
+          report.skipped = report.skipped + 1
         else
-          local invalid = false
-          for i = 1, result.n do
-            if result[i] ~= nil then invalid = true break end
-          end
-          if invalid then
-            self:_fault(record, "invalidate", "lifecycle.invalidate must not return a value", context)
+          report.called = report.called + 1
+          local result, err = self:_invoke(
+            record,
+            record.id .. ".invalidate",
+            handler,
+            context,
+            reason
+          )
+          if not result then
+            self:_fault(record, "invalidate", err, context)
             report.failed = report.failed + 1
           else
-            report.succeeded = report.succeeded + 1
-            report.contributors[#report.contributors + 1] = record.id
+            local invalid = false
+            for i = 1, result.n do
+              if result[i] ~= nil then invalid = true break end
+            end
+            if invalid then
+              self:_fault(record, "invalidate", "lifecycle.invalidate must not return a value", context)
+              report.failed = report.failed + 1
+            else
+              report.succeeded = report.succeeded + 1
+              report.contributors[#report.contributors + 1] = record.id
+            end
           end
         end
       end
     end
-  end
-  self:_leave()
-  return report
+    return report
+  end)
 end
 
 function Dispatcher:dispose(context, reason)

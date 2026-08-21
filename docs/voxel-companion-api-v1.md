@@ -435,8 +435,10 @@ rotation, and absolute field-of-view values are not valid v1 results.
 Position deltas use host world units. Rotation and field-of-view deltas use
 radians.
 
-The dispatcher adds successful results in deterministic extension order. It
-returns:
+The dispatcher adds successful results in deterministic extension order. Each
+addition is transactional. If one contribution would make any aggregate field
+non-finite, that extension faults, the prior aggregate stays unchanged, and
+later contributions continue. The dispatcher returns:
 
 ```lua
 local delta, report = dispatcher:modifyCamera(camera)

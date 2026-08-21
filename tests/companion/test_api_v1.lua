@@ -248,6 +248,48 @@ return function(T)
     T.truthy(err:match("forbidden resource locator"))
   end)
 
+  T.test("formats untrusted table keys without conversion callbacks", function()
+    local API = load_api()
+    local conversion_calls = 0
+    local hostile_key = setmetatable({}, {
+      __tostring = function()
+        conversion_calls = conversion_calls + 1
+        error("untrusted key conversion ran")
+      end,
+    })
+    local command = {
+      schemaVersion = 1,
+      cacheKey = draw_key("opaque_after_terrain", 1),
+      kind = "mesh",
+      owner = "kfp.world",
+      phase = "opaque_after_terrain",
+      sequence = 1,
+      sortKey = "world:plane",
+      material = "world:apron",
+      geometry = { primitive = "plane", width = 16, depth = 16 },
+    }
+    command[hostile_key] = true
+
+    local call_ok, valid, err = pcall(API.validate_draw_command, command, "mesh")
+    T.truthy(call_ok)
+    T.falsy(valid)
+    T.truthy(type(err) == "string" and err:match("<table key>"))
+
+    command[hostile_key] = nil
+    command.kind = hostile_key
+    call_ok, valid, err = pcall(API.validate_draw_command, command, "mesh")
+    T.truthy(call_ok)
+    T.falsy(valid)
+    T.truthy(type(err) == "string" and err:match("<table key>"))
+
+    local dispatcher = API.new({ capabilities = {} })
+    call_ok, valid, err = pcall(dispatcher.dispatch, dispatcher, hostile_key, {})
+    T.truthy(call_ok)
+    T.falsy(valid)
+    T.truthy(type(err) == "string" and err:match("<table key>"))
+    T.equal(conversion_calls, 0)
+  end)
+
   T.test("uses draw kind methods with command and the current borrowed context", function()
     local API = load_api()
     local seen_context
@@ -427,6 +469,30 @@ return function(T)
     })
   end)
 
+  T.test("captures flat lifecycle callbacks at registration", function()
+    local API = load_api()
+    local calls = {}
+    local spec = {
+      api = 1,
+      id = "flat.callback.snapshot",
+      invalidate = function(reason) calls[#calls + 1] = "invalidate:" .. reason end,
+      dispose = function() calls[#calls + 1] = "dispose" end,
+    }
+    local dispatcher = API.new({ capabilities = {} })
+    local handle, err = dispatcher:register(spec)
+    T.truthy(handle, err)
+
+    spec.invalidate = function() error("mutated invalidate callback ran") end
+    spec.dispose = function() error("mutated dispose callback ran") end
+
+    T.truthy(dispatcher:attach({}))
+    T.truthy(dispatcher:start({}))
+    local invalidation = dispatcher:invalidate({}, "map")
+    T.equal(invalidation.succeeded, 1)
+    T.truthy(dispatcher:dispose({}, "shutdown"))
+    T.deepEqual(calls, { "invalidate:map", "dispose" })
+  end)
+
   T.test("bounds the registered extension set", function()
     local API = load_api()
     local dispatcher = API.new({ capabilities = {}, max_extensions = 1 })
@@ -576,6 +642,36 @@ return function(T)
     T.deepEqual(order, { "a.first", "b.second", "z.last" })
   end)
 
+  T.test("clears dispatch state after validation failures", function()
+    local API = load_api()
+    local services = host_services()
+    local calls = 0
+    local dispatcher = API.new({ capabilities = { API.CAPABILITIES.RENDER_PHASES } })
+    T.truthy(dispatcher:register({
+      api = 1,
+      id = "dispatch.validation.recovery",
+      render = { background = function() calls = calls + 1 end },
+    }))
+    T.truthy(dispatcher:attach(services))
+    T.truthy(dispatcher:start(render_context(services)))
+
+    local report, err = dispatcher:dispatch("background", {})
+    T.falsy(report)
+    T.truthy(err:match("world"))
+
+    local hostile_context = setmetatable({}, {
+      __index = function() error("validation proxy access failed") end,
+    })
+    report, err = dispatcher:dispatch("background", hostile_context)
+    T.falsy(report)
+    T.truthy(err:match("validation proxy access failed"))
+
+    report, err = dispatcher:dispatch("background", render_context(services))
+    T.truthy(report, err)
+    T.equal(report.succeeded, 1)
+    T.equal(calls, 1)
+  end)
+
   T.test("isolates a phase fault and continues later extensions", function()
     local API = load_api()
     local dispatcher = API.new({ capabilities = { API.CAPABILITIES.RENDER_PHASES } })
@@ -695,6 +791,58 @@ return function(T)
     T.equal(result.positionDelta.y, 4)
     T.equal(report.failed, 1)
     T.truthy(invalid:status().faulted)
+  end)
+
+  T.test("rejects only a camera contribution that overflows the aggregate", function()
+    local API = load_api()
+    local dispatcher, services = new_running(API)
+    local context = render_context(services)
+    T.truthy(dispatcher:register({
+      api = 1,
+      id = "camera.large.first",
+      priority = 0,
+      camera = function()
+        return {
+          positionDelta = { x = 1e308 },
+          rotationDelta = { yaw = 1e308 },
+          fovDelta = 1e308,
+        }
+      end,
+    }, context))
+    local overflow = dispatcher:register({
+      api = 1,
+      id = "camera.large.overflow",
+      priority = 1,
+      camera = function()
+        return { positionDelta = { x = 1e308, y = 50 } }
+      end,
+    }, context)
+    T.truthy(overflow)
+    T.truthy(dispatcher:register({
+      api = 1,
+      id = "camera.large.recovery",
+      priority = 2,
+      camera = function()
+        return {
+          positionDelta = { x = -1e308, y = 2 },
+          rotationDelta = { yaw = -1e308 },
+          fovDelta = -1e308,
+        }
+      end,
+    }, context))
+
+    local result, report = dispatcher:dispatch_camera(context)
+    T.equal(result.positionDelta.x, 0)
+    T.equal(result.positionDelta.y, 2)
+    T.equal(result.rotationDelta.yaw, 0)
+    T.equal(result.fovDelta, 0)
+    T.equal(report.succeeded, 2)
+    T.equal(report.failed, 1)
+    T.deepEqual(report.contributors, {
+      "camera.large.first",
+      "camera.large.recovery",
+    })
+    T.truthy(overflow:status().faulted)
   end)
 
   T.test("merges declarative terrain patches without drawing", function()
