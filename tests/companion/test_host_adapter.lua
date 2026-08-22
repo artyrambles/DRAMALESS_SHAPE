@@ -13,6 +13,15 @@ return function(T)
     return chunk()
   end
 
+  local function load_real_tile_shape()
+    return load_with_argument("lib/TileShape.lua", {
+      data = function(name)
+        T.equal(name, "voxel_heights")
+        return load_fixture("data/voxel_heights.lua")
+      end,
+    })
+  end
+
   local function new_backend()
     local backend = {
       calls = {}, phases = {}, invalidations = 0, disposals = 0,
@@ -112,7 +121,7 @@ return function(T)
         isThirdPerson = function() return false end,
       },
       quality = { scale = function() return options.quality_scale or 2 end },
-      tile_shape = {
+      tile_shape = options.tile_shape or {
         forMap = function()
           return {
             [0] = { class = "ground", h = 0 },
@@ -317,6 +326,412 @@ return function(T)
     T.truthy(env.host:update(1 / 60, 3, next_state))
     T.equal(#changes, 3)
     T.equal(changes[3].id, "CERULEAN_CITY")
+  end)
+
+  T.test("normalizes exact shape semantics and fails closed on walkable cells", function()
+    local shape_at = {}
+    local classes = {
+      [1] = "tree",
+      [2] = "canopy",
+      [3] = "stump",
+      [4] = "planter",
+      [5] = "cliff",
+      [6] = "roof",
+      [7] = "tree",
+      [8] = "tree",
+      [9] = "tree",
+    }
+    local tile_shape = {
+      forMap = function()
+        local shapes = {}
+        for tile, class in pairs(classes) do
+          shapes[tile] = { class = class, h = 16 }
+        end
+        return shapes
+      end,
+      at = function(_, shapes, tile, tx, ty)
+        shape_at[#shape_at + 1] = { tile, tx, ty }
+        return shapes[tile]
+      end,
+    }
+    local map = {
+      id = "SEMANTIC_CLASSES",
+      widthCells = 9,
+      heightCells = 1,
+      def = { id = "SEMANTIC_CLASSES", width = 4, height = 1,
+        tileset = "CUSTOM", outdoor = true },
+      tileset = { id = "CUSTOM", imageWidth = 128, imageHeight = 48 },
+    }
+    function map:isWalkableCell(x)
+      if x == 8 then return nil end
+      return x == 6
+    end
+    function map:isWaterCell(x) return x == 7 end
+    function map:isGrassCell() return false end
+    function map:warpAtCell() return nil end
+    function map:isWarpTileCell() return false end
+    function map:cellTile(x) return x + 1 end
+
+    local player = { id = "player", cellX = 0, cellY = 0,
+      px = 0, py = 0, facing = "south" }
+    local state = { map = map, player = player, entities = { player }, neighbors = {} }
+    local env = new_environment(T, { tile_shape = tile_shape })
+    local services
+    local handle, err = env.host:provider().register(extension("semantic-classes", {
+      requires = { "world_snapshot" },
+      attach = function(value) services = { world = value.world } end,
+    }))
+    T.truthy(handle, err)
+    T.truthy(env.host:update(1 / 60, 1, state))
+    local snapshot = services.world:snapshot()
+
+    local function cell(x, tile, class, solid, walkable, tags)
+      return {
+        x = x, z = 0, y = x, worldY = x, height = 16,
+        kind = class,
+        material = ("atlas:CUSTOM:%d"):format(tile),
+        atlas = "host:terrain",
+        solid = solid,
+        walkable = walkable,
+        tags = tags,
+        metadata = { tile = tile, tileset = "CUSTOM", warp = false },
+      }
+    end
+    T.deepEqual(snapshot.cells, {
+      cell(0, 1, "tree", true, false,
+        { tree = true, tree_support = true, object = true }),
+      cell(1, 2, "canopy", true, false,
+        { canopy = true, object = true }),
+      cell(2, 3, "stump", true, false,
+        { stump = true, object = true }),
+      cell(3, 4, "planter", true, false,
+        { planter = true, object = true }),
+      cell(4, 5, "cliff", true, false,
+        { cliff = true, object = true }),
+      cell(5, 6, "roof", true, false,
+        { roof = true, object = true }),
+      cell(6, 7, "tree", false, true, { shore = true }),
+      cell(7, 8, "tree", false, false, { water = true }),
+      cell(8, 9, "tree", false, false, {}),
+    })
+    T.deepEqual(shape_at, {
+      { 1, 0, 1 }, { 2, 2, 1 }, { 3, 4, 1 }, { 4, 6, 1 },
+      { 5, 8, 1 }, { 6, 10, 1 }, { 7, 12, 1 }, { 8, 14, 1 },
+      { 9, 16, 1 },
+    })
+  end)
+
+  T.test("exports exact authored tree boulder and mountain support tags", function()
+    local tile_shape = load_real_tile_shape()
+    local tiles = { 64, 42, 2, 36 }
+    local map = {
+      id = "AUTHORED_ROUTE",
+      widthCells = 4,
+      heightCells = 1,
+      def = { id = "AUTHORED_ROUTE", width = 2, height = 1,
+        tileset = "OVERWORLD", outdoor = true, connections = {} },
+      tileset = { id = "OVERWORLD", imageWidth = 128, imageHeight = 48,
+        animatedTiles = {} },
+      waterTiles = {},
+      walkable = {},
+    }
+    function map:isWalkableCell() return false end
+    function map:isWaterCell() return false end
+    function map:isGrassCell() return false end
+    function map:warpAtCell() return nil end
+    function map:isWarpTileCell() return false end
+    function map:isDoorTileCell() return false end
+    function map:cellTile(x) return tiles[x + 1] end
+    function map:tileAt(tx) return tiles[math.floor(tx / 2) + 1] end
+
+    local player = { id = "player", cellX = 0, cellY = 0,
+      px = 0, py = 0, facing = "south" }
+    local state = { map = map, player = player, entities = { player }, neighbors = {} }
+    local env = new_environment(T, { tile_shape = tile_shape })
+    local services
+    local handle, err = env.host:provider().register(extension("authored-semantics", {
+      requires = { "world_snapshot" },
+      attach = function(value) services = { world = value.world } end,
+    }))
+    T.truthy(handle, err)
+    T.truthy(env.host:update(1 / 60, 1, state))
+    local snapshot = services.world:snapshot()
+    T.truthy(snapshot.tags.mountain)
+
+    local function cell(x, tile, class, tags)
+      return {
+        x = x, z = 0, y = x, worldY = x, height = 16,
+        kind = class,
+        material = ("atlas:OVERWORLD:%d"):format(tile),
+        atlas = "host:terrain",
+        solid = true,
+        walkable = false,
+        tags = tags,
+        metadata = { tile = tile, tileset = "OVERWORLD", warp = false },
+      }
+    end
+    T.deepEqual(snapshot.cells, {
+      cell(0, 64, "cylinder", {
+        cylinder = true, tree = true, tree_support = true, object = true,
+      }),
+      cell(1, 42, "cylinder", {
+        cylinder = true, boulder_tree = true, object = true,
+      }),
+      cell(2, 2, "wall", {
+        object = true, mountain = true, mountain_support = true,
+        mountain_seed = true,
+      }),
+      cell(3, 36, "wall", {
+        object = true, mountain = true, mountain_support = true,
+        mountain_seed = true,
+      }),
+    })
+  end)
+
+  T.test("exports bounded semantic eligibility through the world callback", function()
+    local tile_shape = load_real_tile_shape()
+    local width, height = 14, 8
+    local tiles = {}
+    local function key(x, z) return z * width + x end
+    local function put(x, z, tile) tiles[key(x, z)] = tile end
+
+    put(0, 0, 64)   -- exact tree tile exposed by a walkable connection ghost
+    put(13, 0, 2)   -- exact seed inside the active north connection band
+    put(0, 4, 2)    -- valid seed
+    put(1, 4, 10)   -- support at reach one
+    put(2, 4, 10)   -- support at reach two
+    put(3, 4, 10)   -- candidate beyond the bounded reach
+    put(5, 6, 10)   -- non-seed support vetoed by the nearby door
+    put(6, 6, 36)   -- exact seed that keeps the cave-mouth exception
+
+    local map = {
+      id = "SEMANTIC_ROUTE",
+      widthCells = width,
+      heightCells = height,
+      def = { id = "SEMANTIC_ROUTE", width = width / 2, height = height / 2,
+        tileset = "OVERWORLD", outdoor = true, connections = { north = {} } },
+      tileset = { id = "OVERWORLD", tilesPerRow = 16,
+        imageWidth = 128, imageHeight = 48, animatedTiles = {} },
+      waterTiles = {},
+      walkable = { [0] = true },
+    }
+    function map:cellTile(x, z) return tiles[key(x, z)] or 0 end
+    function map:tileAt(tx, ty)
+      return self:cellTile(math.floor(tx / 2), math.floor((ty - 1) / 2))
+    end
+    function map:isWalkableCell(x, z)
+      return (x == 0 and z == 0) or self:cellTile(x, z) == 0
+    end
+    function map:isWaterCell() return false end
+    function map:isGrassCell() return false end
+    function map:warpAtCell(x, z)
+      return x == 7 and z == 6 and { target = "SYNTHETIC_CAVE" } or nil
+    end
+    function map:isWarpTileCell() return false end
+    function map:isDoorTileCell(x, z) return x == 7 and z == 6 end
+
+    local player = { id = "player", cellX = 0, cellY = 0,
+      px = 0, py = 0, facing = "south" }
+    local state = { map = map, player = player, entities = { player }, neighbors = {} }
+    local env = new_environment(T, { tile_shape = tile_shape })
+    local services, callback_snapshot
+    local function copy_plain(value)
+      if type(value) ~= "table" then return value end
+      local result = {}
+      for item_key, item_value in pairs(value) do
+        result[copy_plain(item_key)] = copy_plain(item_value)
+      end
+      return result
+    end
+    local handle, err = env.host:provider().register(extension("semantic-eligibility", {
+      requires = { "world_snapshot" },
+      attach = function(value) services = { world = value.world } end,
+      worldChanged = function(snapshot)
+        callback_snapshot = {
+          id = snapshot.id,
+          cells = copy_plain(snapshot.cells),
+        }
+      end,
+    }))
+    T.truthy(handle, err)
+    T.truthy(env.host:update(1 / 60, 1, state))
+    local snapshot = services.world:snapshot()
+    T.truthy(callback_snapshot)
+    T.equal(callback_snapshot.id, "SEMANTIC_ROUTE")
+    T.truthy(snapshot.tags.mountain)
+
+    local function at(x, z) return snapshot.cells[z * width + x + 1] end
+    local function expected(x, z, tile, class, height_value, solid, walkable, tags,
+        warp)
+      return {
+        x = x, z = z, y = x + z, worldY = x + z, height = height_value,
+        kind = class,
+        material = ("atlas:OVERWORLD:%d"):format(tile),
+        atlas = "host:terrain",
+        solid = solid,
+        walkable = walkable,
+        tags = tags,
+        metadata = { tile = tile, tileset = "OVERWORLD", warp = warp or false },
+      }
+    end
+
+    T.deepEqual({
+      walkable_tree_ghost = at(0, 0),
+      connection_seed = at(13, 0),
+      seed = at(0, 4),
+      support_one = at(1, 4),
+      support_two = at(2, 4),
+      beyond_reach = at(3, 4),
+      door_vetoed_support = at(5, 6),
+      door_near_seed = at(6, 6),
+      door = at(7, 6),
+    }, {
+      walkable_tree_ghost = expected(0, 0, 64, "cylinder", 16, false, true,
+        { cylinder = true }),
+      connection_seed = expected(13, 0, 2, "wall", 16, true, false,
+        { object = true }),
+      seed = expected(0, 4, 2, "wall", 16, true, false,
+        { object = true, mountain = true, mountain_support = true,
+          mountain_seed = true }),
+      support_one = expected(1, 4, 10, "wall", 16, true, false,
+        { object = true, mountain = true, mountain_support = true }),
+      support_two = expected(2, 4, 10, "wall", 16, true, false,
+        { object = true, mountain = true, mountain_support = true }),
+      beyond_reach = expected(3, 4, 10, "wall", 16, true, false,
+        { object = true }),
+      door_vetoed_support = expected(5, 6, 10, "wall", 16, true, false,
+        { object = true }),
+      door_near_seed = expected(6, 6, 36, "wall", 16, true, false,
+        { object = true, mountain = true, mountain_support = true,
+          mountain_seed = true }),
+      door = expected(7, 6, 0, "ground", 0, false, true,
+        { door = true }, true),
+    })
+
+    T.deepEqual(callback_snapshot.cells[1], at(0, 0))
+  end)
+
+  T.test("rejects mountain seeds near roofs and unknown round objects", function()
+    local classes = {
+      [1] = { class = "cliff", h = 32,
+        companion_tags = { mountain_seed = true } },
+      [2] = { class = "cliff", h = 32 },
+      [3] = { class = "roof", h = 28 },
+      [4] = { class = "cylinder", h = 16 },
+    }
+    local tile_shape = {
+      forMap = function() return classes end,
+      at = function(_, shapes, tile) return shapes[tile] end,
+    }
+    local map = {
+      id = "ROOF_VETO",
+      widthCells = 4,
+      heightCells = 1,
+      def = { id = "ROOF_VETO", width = 2, height = 1,
+        tileset = "CUSTOM", outdoor = true, connections = {} },
+      tileset = { id = "CUSTOM", imageWidth = 128, imageHeight = 48 },
+    }
+    function map:isWalkableCell() return false end
+    function map:isWaterCell() return false end
+    function map:isGrassCell() return false end
+    function map:cellTile(x) return x + 1 end
+    local player = { id = "player", cellX = 0, cellY = 0,
+      px = 0, py = 0, facing = "south" }
+    local state = { map = map, player = player, entities = { player }, neighbors = {} }
+    local env = new_environment(T, { tile_shape = tile_shape })
+    local services
+    local handle, err = env.host:provider().register(extension("roof-veto", {
+      requires = { "world_snapshot" },
+      attach = function(value) services = { world = value.world } end,
+    }))
+    T.truthy(handle, err)
+    T.truthy(env.host:update(1 / 60, 1, state))
+    local snapshot = services.world:snapshot()
+    T.falsy(snapshot.tags.mountain)
+    for _, cell in ipairs(snapshot.cells) do
+      T.falsy(cell.tags.mountain)
+      T.falsy(cell.tags.mountain_support)
+      T.falsy(cell.tags.mountain_seed)
+      T.falsy(cell.tags.boulder_tree)
+      T.falsy(cell.tags.tree_support)
+    end
+    T.truthy(snapshot.cells[1].tags.cliff)
+    T.truthy(snapshot.cells[2].tags.cliff)
+    T.truthy(snapshot.cells[3].tags.roof)
+    T.truthy(snapshot.cells[4].tags.cylinder)
+  end)
+
+  T.test("exports isolated mountain seeds as eligibility facts", function()
+    local shape = { class = "cliff", h = 32,
+      companion_tags = { mountain_seed = true } }
+    local tile_shape = {
+      forMap = function() return { [1] = shape } end,
+      at = function() return shape end,
+    }
+    local map = {
+      id = "ISOLATED_ROCK_SEED",
+      widthCells = 1,
+      heightCells = 1,
+      def = { id = "ISOLATED_ROCK_SEED", width = 1, height = 1,
+        tileset = "CUSTOM", outdoor = true, connections = {} },
+      tileset = { id = "CUSTOM", imageWidth = 128, imageHeight = 48 },
+    }
+    function map:isWalkableCell() return false end
+    function map:isWaterCell() return false end
+    function map:isGrassCell() return false end
+    function map:cellTile() return 1 end
+    local player = { id = "player", cellX = 0, cellY = 0,
+      px = 0, py = 0, facing = "south" }
+    local state = { map = map, player = player, entities = { player }, neighbors = {} }
+    local env = new_environment(T, { tile_shape = tile_shape })
+    local services
+    local handle, err = env.host:provider().register(extension("isolated-seed", {
+      requires = { "world_snapshot" },
+      attach = function(value) services = { world = value.world } end,
+    }))
+    T.truthy(handle, err)
+    T.truthy(env.host:update(1 / 60, 1, state))
+    local snapshot = services.world:snapshot()
+    T.truthy(snapshot.tags.mountain)
+    T.truthy(snapshot.cells[1].tags.mountain)
+    T.truthy(snapshot.cells[1].tags.mountain_support)
+    T.truthy(snapshot.cells[1].tags.mountain_seed)
+  end)
+
+  T.test("keeps profile semantics exact across ambiguous TileShape classes", function()
+    local TileShape = load_real_tile_shape()
+    local function map_for(id)
+      local map = {
+        def = { id = id .. "_TEST", tileset = id, outdoor = id ~= "GYM" },
+        tileset = { id = id, imageWidth = 128, imageHeight = 48,
+          animatedTiles = {} },
+        waterTiles = {}, walkable = {},
+      }
+      function map:isWalkableCell() return false end
+      function map:isWaterCell() return false end
+      function map:tileAt() return 0 end
+      return map
+    end
+    local overworld = TileShape.forMap(map_for("OVERWORLD"))
+    T.truthy(overworld[64].companion_tags.tree_support)
+    T.falsy(overworld[64].companion_tags.boulder_tree)
+    T.truthy(overworld[42].companion_tags.boulder_tree)
+    T.falsy(overworld[42].companion_tags.tree_support)
+    T.truthy(overworld[2].companion_tags.mountain_seed)
+
+    local forest = TileShape.forMap(map_for("FOREST"))
+    T.equal(forest[4].class, "canopy")
+    T.truthy(forest[4].companion_tags.canopy)
+    T.falsy(forest[4].companion_tags.tree_support)
+    T.equal(forest[2].class, "stump")
+    T.truthy(forest[2].companion_tags.stump)
+    T.falsy(forest[2].companion_tags.tree_support)
+    T.truthy(forest.classes.planter.companion_tags.planter)
+    T.falsy(forest.classes.planter.companion_tags.tree_support)
+
+    local gym = TileShape.forMap(map_for("GYM"))
+    T.truthy(gym[44].companion_tags.boulder_tree)
+    T.falsy(gym[44].companion_tags.tree_support)
   end)
 
   T.test("uses the public game ready save version for world identity", function()

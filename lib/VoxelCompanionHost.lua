@@ -36,6 +36,25 @@ Host.LIMITS = {
   drawCommandsPerFrame = 4096,
 }
 
+local RAW_SHAPE_TAGS = {
+  cylinder = true,
+  canopy = true,
+  stump = true,
+  planter = true,
+  cliff = true,
+  roof = true,
+}
+
+local MOUNTAIN_CANDIDATE_KINDS = {
+  wall = true,
+  cliff = true,
+  rock = true,
+}
+
+local CARDINAL_DELTAS = {
+  { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
+}
+
 local function finite(value, fallback)
   value = tonumber(value)
   if not value or value ~= value or value == math.huge or value == -math.huge then
@@ -68,7 +87,8 @@ local function safe_call(object, name, ...)
   local method = object and object[name]
   if type(method) ~= "function" then return nil end
   local ok, value = pcall(method, object, ...)
-  return ok and value or nil
+  if not ok then return nil end
+  return value
 end
 
 local function normalized_game_id(value)
@@ -490,27 +510,61 @@ function Host:_worldTags(map)
   return tags
 end
 
+function Host:_shapeAt(map, x, z, shapes, tile)
+  if tile == nil or type(shapes) ~= "table" then return nil end
+  local at = self._tile_shape and self._tile_shape.at
+  if type(at) == "function" then
+    -- Map:cellTile is the cell's canonical bottom-left 8x8 tile.  TileShape
+    -- uses tile coordinates and the same south row is `z * 2 + 1`.
+    local ok, shape = pcall(at, map, shapes, tile, x * 2, z * 2 + 1)
+    if ok and type(shape) == "table" then return shape end
+  end
+  local shape = shapes[tile]
+  return type(shape) == "table" and shape or nil
+end
+
 function Host:_cell(map, x, z, shapes, world_tags)
-  local walkable = safe_call(map, "isWalkableCell", x, z) == true
-  local water = safe_call(map, "isWaterCell", x, z) == true
+  world_tags = world_tags or {}
+  local walkable_value = safe_call(map, "isWalkableCell", x, z)
+  local water_value = safe_call(map, "isWaterCell", x, z)
+  local walkable = walkable_value == true
+  local water = water_value == true
   local grass = safe_call(map, "isGrassCell", x, z) == true
   local warp = safe_call(map, "warpAtCell", x, z)
     or safe_call(map, "isWarpTileCell", x, z) == true
+  local door = safe_call(map, "isDoorTileCell", x, z) == true
   local tile = safe_call(map, "cellTile", x, z)
-  local shape = tile ~= nil and shapes and shapes[tile] or nil
+  if tile == nil then tile = safe_call(map, "tileAt", x * 2, z * 2 + 1) end
+  local shape = self:_shapeAt(map, x, z, shapes, tile)
   local class = shape and shape.class or (water and "water" or (walkable and "ground" or "wall"))
+  local is_water = water or class == "water"
+  -- A missing or failed collision query is not proof of a solid support.
+  local solid = walkable_value == false and not is_water
   local tags = {}
   if world_tags.interior then tags.interior, tags.room = true, true end
   if world_tags.cave then tags.cave = true end
   if world_tags.forest then tags.forest = true end
-  if water or class == "water" then tags.water = true end
+  if is_water then tags.water = true end
   if grass or class == "grass" then tags.grass = true end
-  if class == "tree" or class == "canopy" or class == "stump" or class == "planter" then
-    tags.tree = true
+  if RAW_SHAPE_TAGS[class] then tags[class] = true end
+
+  local semantic = type(shape and shape.companion_tags) == "table"
+    and shape.companion_tags or {}
+  local support_ok = world_tags.outdoor == true and solid and not walkable
+    and not is_water
+  if support_ok and (class == "tree" or semantic.tree_support == true) then
+    tags.tree, tags.tree_support = true, true
   end
-  if class == "cliff" or class == "roof" then tags.mountain = true end
-  if warp then tags.door = true end
-  if not walkable and not water then tags.object = true end
+  if support_ok and semantic.boulder_tree == true then
+    tags.boulder_tree = true
+  end
+  -- This is an internal candidate until the bounded cluster pass below
+  -- verifies it.  It is removed before a snapshot can escape.
+  if support_ok and semantic.mountain_seed == true then
+    tags.mountain_seed = true
+  end
+  if warp or door then tags.door = true end
+  if solid then tags.object = true end
 
   local ground = 0
   if type(self._ground_at) == "function" then
@@ -529,7 +583,7 @@ function Host:_cell(map, x, z, shapes, world_tags)
     kind = class,
     material = ("atlas:%s:%d"):format(tileset_id, tile_id),
     atlas = "host:terrain",
-    solid = not walkable and not water,
+    solid = solid,
     walkable = walkable,
     tags = tags,
     metadata = {
@@ -538,6 +592,95 @@ function Host:_cell(map, x, z, shapes, world_tags)
       warp = warp and true or false,
     },
   }
+end
+
+-- The public mountain tags reproduce the last safe legacy policy without its
+-- source splice.  Exact authored rock seeds vouch for at most two cardinal
+-- cells of solid wall/cliff/rock.  Roof proximity rejects every candidate;
+-- door proximity rejects non-seed flood cells.  This prevents generic walls,
+-- buildings, and roofs from becoming mountains.
+function Host:_classifyMountainTags(map, cells, width, height, world_tags)
+  local function cell_at(x, z)
+    if x < 0 or z < 0 or x >= width or z >= height then return nil end
+    return cells[z * width + x + 1]
+  end
+
+  local connections = map and map.def and map.def.connections or {}
+  local function in_connection_band(cell)
+    return (connections.north and cell.z < 2)
+      or (connections.south and cell.z > height - 3)
+      or (connections.west and cell.x < 2)
+      or (connections.east and cell.x > width - 3)
+  end
+
+  local roof_near, door_near = {}, {}
+  local function mark_near(target, cell)
+    for dz = -2, 2 do
+      for dx = -2, 2 do
+        if dx ~= 0 or dz ~= 0 then
+          local x, z = cell.x + dx, cell.z + dz
+          if x >= 0 and z >= 0 and x < width and z < height then
+            target[z * width + x + 1] = true
+          end
+        end
+      end
+    end
+  end
+  for _, cell in ipairs(cells) do
+    if cell.tags.roof then mark_near(roof_near, cell) end
+    if cell.tags.door then mark_near(door_near, cell) end
+  end
+
+  local candidates, queue = {}, {}
+  for index, cell in ipairs(cells) do
+    local seed = cell.tags.mountain_seed == true
+    cell.tags.mountain_seed = nil
+    local candidate = world_tags.outdoor == true and cell.solid == true
+      and cell.walkable == false and not cell.tags.water
+      and MOUNTAIN_CANDIDATE_KINDS[cell.kind] == true
+      and not in_connection_band(cell)
+      and not roof_near[index]
+      and (seed or not door_near[index])
+    if candidate then
+      candidates[index] = { cell = cell, seed = seed }
+      if seed then
+        candidates[index].reach = 0
+        queue[#queue + 1] = index
+      end
+    end
+  end
+
+  local head = 1
+  while queue[head] do
+    local index = queue[head]
+    head = head + 1
+    local current = candidates[index]
+    if current.reach < 2 then
+      for _, delta in ipairs(CARDINAL_DELTAS) do
+        local x = current.cell.x + delta[1]
+        local z = current.cell.z + delta[2]
+        if x >= 0 and z >= 0 and x < width and z < height then
+          local next_index = z * width + x + 1
+          local neighbor = candidates[next_index]
+          if neighbor and neighbor.reach == nil then
+            neighbor.reach = current.reach + 1
+            queue[#queue + 1] = next_index
+          end
+        end
+      end
+    end
+  end
+
+  if #queue == 0 then return end
+
+  world_tags.mountain = true
+  for _, candidate in pairs(candidates) do
+    if candidate.reach ~= nil then
+      local tags = candidate.cell.tags
+      tags.mountain, tags.mountain_support = true, true
+      if candidate.seed then tags.mountain_seed = true end
+    end
+  end
 end
 
 function Host:_actors(state, map)
@@ -645,6 +788,7 @@ function Host:_snapshot(state)
       cells[#cells + 1] = self:_cell(map, x, z, shapes, world_tags)
     end
   end
+  self:_classifyMountainTags(map, cells, width, height, world_tags)
   local function cell_at(x, z)
     if x < 0 or z < 0 or x >= width or z >= height then return nil end
     return cells[z * width + x + 1]

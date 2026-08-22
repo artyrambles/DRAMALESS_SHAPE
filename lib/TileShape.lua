@@ -208,6 +208,27 @@ local ART = {
   stair_down_w = "stair",
 }
 
+-- Truthful object facts carried with a resolved shape.  These are not render
+-- instructions.  Voxel Companion copies only approved Boolean facts from this
+-- table after collision and world-mode checks.  In particular, `cylinder` is
+-- deliberately only a geometry fact: that render pool contains trees,
+-- boulders, canopies, rubble, and other round objects.
+local CLASS_COMPANION_TAGS = {
+  tree = { tree = true, tree_support = true },
+  cylinder = { cylinder = true },
+  canopy = { canopy = true },
+  stump = { stump = true },
+  planter = { planter = true },
+  cliff = { cliff = true },
+  roof = { roof = true },
+}
+
+local COMPANION_TILE_TAGS = {
+  tree_support = true,
+  boulder_tree = true,
+  mountain_seed = true,
+}
+
 local spec = nil          -- the loaded data file, or false when absent
 local cache = {}          -- tileset id -> resolved shape list
 local figCache = {}       -- tileset id -> parsed figure masks, or false
@@ -308,15 +329,51 @@ local function authoredConditions(tilesetId, heights)
   return any and out or nil
 end
 
-local function shapeFor(class, heights, authored)
-  return { class = class, h = heights[class] or 0,
-           art = ART[class] or "upright",
-           -- grass and flowers draw a flat ground base like any walkable
-           -- tile; the standing tufts and cutouts are additive geometry
-           -- from Structures
-           flat = ART[class] == "flat" or class == "grass"
-                  or class == "flower",
-           authored = authored or false }
+-- tile id -> approved companion facts from the authored profile.  Tile IDs
+-- are interpreted only inside their tileset.  Malformed or unknown fields are
+-- ignored, so profile extensions fail closed instead of creating new public
+-- semantics by accident.
+local function authoredCompanionTags(tilesetId)
+  local s = load()
+  local entry = s and s.tilesets and s.tilesets[tilesetId]
+  local profile = entry and entry.companion
+  local out = {}
+  if type(profile) ~= "table" then return out end
+  for tag in pairs(COMPANION_TILE_TAGS) do
+    local tiles = profile[tag]
+    if type(tiles) == "table" then
+      for _, tile in ipairs(tiles) do
+        if type(tile) == "number" and tile >= 0 and tile == math.floor(tile) then
+          local tags = out[tile] or {}
+          tags[tag] = true
+          out[tile] = tags
+        end
+      end
+    end
+  end
+  return out
+end
+
+local function shapeFor(class, heights, authored, tileTags)
+  local companionTags = {}
+  for tag, enabled in pairs(CLASS_COMPANION_TAGS[class] or {}) do
+    if enabled == true then companionTags[tag] = true end
+  end
+  for tag, enabled in pairs(tileTags or {}) do
+    if COMPANION_TILE_TAGS[tag] and enabled == true then
+      companionTags[tag] = true
+    end
+  end
+  return {
+    class = class,
+    h = heights[class] or 0,
+    art = ART[class] or "upright",
+    -- grass and flowers draw a flat ground base like any walkable tile; the
+    -- standing tufts and cutouts are additive geometry from Structures
+    flat = ART[class] == "flat" or class == "grass" or class == "flower",
+    authored = authored or false,
+    companion_tags = next(companionTags) and companionTags or nil,
+  }
 end
 
 -- Resolved TILE-LEVEL shapes for the tileset `map` uses: a list indexed by
@@ -350,6 +407,7 @@ function TileShape.forMap(map)
     end
   end
   local authored = authoredGroups(id, heights)
+  local companion = authoredCompanionTags(id)
   local count = math.floor((tileset.imageWidth or 128) / 8)
                 * math.floor((tileset.imageHeight or 48) / 8)
 
@@ -393,7 +451,7 @@ function TileShape.forMap(map)
   for t = 0, count - 1 do
     local class = authored[t]
     if class then
-      shapes[t] = shapeFor(class, heights, true)
+      shapes[t] = shapeFor(class, heights, true, companion[t])
     elseif t == tileset.grassTile then
       -- derived pin: every tileset already names its tall-grass tile, so
       -- the standing-tuft treatment needs no profile entry anywhere

@@ -8,6 +8,9 @@
   `translucent_after_actors` extension seams.
 - Added bounded world snapshots, strictly additive camera deltas, normalized
   service facades, and batched mesh, instance, and billboard drawing.
+- Corrected snapshot scenery semantics so KFP receives authored tree,
+  boulder-tree, and mountain-support tags instead of guesses from generic
+  cylinder, cliff, canopy, stump, planter, or roof render classes.
 - Added deterministic extension ordering, borrowed-context checks, isolated
   faults, bounded caches, and exact derived-resource release.
 - Added KFP ceiling and wall cutaways from the normalized player cell, with

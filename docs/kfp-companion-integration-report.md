@@ -2,15 +2,15 @@
 
 ## Result
 
-DRAMALESS_SHAPE has a local Voxel Companion API v1 host integration on branch
-`kfp-companion-api-v1`. The contract-hardening work remains local and is not
-published.
+DRAMALESS_SHAPE has a Voxel Companion API v1 host integration on branch
+`kfp-companion-api-v1`. The proposed integration is public for review in
+[pull request 47](https://github.com/artyrambles/DRAMALESS_SHAPE/pull/47).
 
 - Origin: `https://github.com/artyrambles/DRAMALESS_SHAPE.git`
 - Pinned base: `f14795b17e85d5d5baedcad63944065e446a4b0b`
 - Host version: `2.0.3`
 - Manifest change: none
-- External push or pull request: none
+- Review branch: `BoLayerDev/DRAMALESS_SHAPE:kfp-companion-api-v1`
 - Frozen dispatcher hash:
   `6FDED9C804298AB064DB61B908382BE7C9A74AD29D611444C33E1BCC53A33D26`
 
@@ -102,13 +102,52 @@ the read-only legacy check succeeds.
 - The release package contains the API, adapter, renderer, and public contract.
   It does not contain tests.
 
+## Normalized scenery-tag contract
+
+All scenery tags below are Boolean fields in a normalized snapshot cell's
+existing `tags` table. They describe host-approved object identity. They do not
+transfer terrain or render-resource ownership.
+
+| Tag | Exact Dramaless meaning |
+| --- | --- |
+| `tree_support` | A real, solid, outdoor tree cell that can support KFP's legacy-style raised-tree treatment. The authored OVERWORLD tree drawing is tiles 64, 65, 80, and 81. An explicit `tree` shape class is also eligible. |
+| `boulder_tree` | A real, solid, outdoor boulder from an authored boulder set. The OVERWORLD set is 42, 43, 58, and 59. The GYM profile also records its exact boulder set, but the outdoor gate prevents normal indoor Gym snapshots from exporting the density tag. |
+| `mountain_support` | A member of a verified outdoor rock cluster. The cluster starts only from authored OVERWORLD rock seeds 2 or 36 and can include at most two cardinal cells of solid `wall`, `cliff`, or `rock` shape. |
+| `mountain_seed` | An exact authored rock seed that survived the same collision, connection, and roof checks as `mountain_support`. |
+
+Every density tag requires an explicit blocked collision result, `solid=true`,
+`walkable=false`, a non-water cell, and an outdoor map. Missing or failed
+collision data fails closed. A walkable path that reuses a tree tile receives
+no tree or boulder density tag.
+
+The mountain classifier also applies these bounded safety rules:
+
+- A connected-map border band is not a mountain candidate.
+- Any roof within two cells rejects a candidate, including an authored seed.
+- Any door within two cells rejects a non-seed flood candidate.
+
+The host exports verified eligibility, including an isolated valid seed. KFP
+owns the common minimum-cluster, quality, and density policy across all hosts.
+
+Broad `tree` and `mountain` tags are exported only with verified
+`tree_support` and `mountain_support`. The truthful raw shape tags `cylinder`,
+`canopy`, `stump`, `planter`, `cliff`, and `roof` remain descriptive only.
+Generic cylinders never imply a tree or boulder. Canopies, stumps, and planters
+never imply tree support. Roofs and generic cliffs never imply a mountain.
+
+The exact tile meanings live in `data/voxel_heights.lua`, beside the host's
+authored tile-shape profile. `TileShape` carries only approved facts into the
+adapter. The adapter then applies collision and map checks and copies plain
+Boolean tags into the snapshot. This keeps KFP independent from Dramaless tile
+IDs and render classes.
+
 ## Test evidence
 
 From the repository root:
 
 ```text
 luajit tools/run_tests.lua
-83 passed, 0 failed, 83 selected (4 files)
+89 passed, 0 failed, 89 selected (4 files)
 
 luajit -e "assert(loadfile(...))"
 syntax ok
