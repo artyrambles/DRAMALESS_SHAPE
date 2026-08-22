@@ -164,6 +164,159 @@ return function(T)
     T.equal(#voxel.draws, 2)
   end)
 
+  T.test("cuts away nearby KFP ceiling and wall boxes from the public player cell", function()
+    for _, role in ipairs({ "ceiling", "wall" }) do
+      local renderer, err, voxel = new_renderer()
+      T.truthy(renderer, err)
+      local ctx = context()
+      ctx.world.player = { cellX = 10, cellZ = 10 }
+      local command = instances_command(
+        "instances.cutaway." .. role,
+        { primitive = "box", role = role, cutaway = true,
+          width = 4, height = 4, depth = 4 },
+        {
+          { x = 10, y = 2, z = 10, cellX = 10, cellZ = 10 },
+          { x = 14, y = 2, z = 6, cellX = 14, cellZ = 6 },
+          { x = 15, y = 2, z = 10, cellX = 15, cellZ = 10 },
+          { x = 30, y = 2, z = 30 },
+        }
+      )
+
+      T.equal(renderer:instances(command, ctx), true)
+      T.equal(#voxel.meshes, 1)
+      T.equal(#voxel.meshes[1].vertices, 48)
+      T.equal(#voxel.meshes[1].indices, 72)
+      T.equal(#voxel.draws, 1)
+    end
+  end)
+
+  T.test("keeps non-cutaway and non-interior boxes visible", function()
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    local ctx = context()
+    ctx.world.player = { cellX = 0, cellZ = 0 }
+    local items = {
+      { x = 0, y = 2, z = 0, cellX = 0, cellZ = 0 },
+      { x = 1, y = 2, z = 1, cellX = 1, cellZ = 1 },
+    }
+
+    T.equal(renderer:instances(instances_command(
+      "instances.cutaway.disabled",
+      { primitive = "box", role = "ceiling", cutaway = false }, items
+    ), ctx), true)
+    T.equal(renderer:instances(instances_command(
+      "instances.cutaway.other-role",
+      { primitive = "box", role = "battle_prop", cutaway = true }, items
+    ), ctx), true)
+
+    T.equal(#voxel.meshes, 2)
+    T.equal(#voxel.meshes[1].vertices, 48)
+    T.equal(#voxel.meshes[2].vertices, 48)
+    T.equal(#voxel.draws, 2)
+  end)
+
+  T.test("fails open when cutaway coordinates are incomplete", function()
+    local cases = {
+      { contextPlayer = nil,
+        item = { x = 1, y = 2, z = 1, cellX = 1, cellZ = 1 } },
+      { contextPlayer = { cellX = 1 },
+        item = { x = 1, y = 2, z = 1, cellX = 1, cellZ = 1 } },
+      { contextPlayer = { cellX = 1, cellZ = 1 },
+        item = { x = 1, y = 2, z = 1, cellX = 1 } },
+    }
+    for index, case in ipairs(cases) do
+      local renderer, err, voxel = new_renderer()
+      T.truthy(renderer, err)
+      local ctx = context()
+      ctx.world.player = case.contextPlayer
+      T.equal(renderer:instances(instances_command(
+        "instances.cutaway.incomplete." .. index,
+        { primitive = "box", role = "ceiling", cutaway = true },
+        { case.item }
+      ), ctx), true)
+      T.equal(#voxel.meshes, 1)
+      T.equal(#voxel.meshes[1].vertices, 24)
+      T.equal(#voxel.draws, 1)
+    end
+  end)
+
+  T.test("uses bounded player-cell variants for moving cutaways", function()
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    local command = instances_command(
+      "instances.cutaway.moving",
+      { primitive = "box", role = "ceiling", cutaway = true },
+      {
+        { x = 1, y = 2, z = 1, cellX = 1, cellZ = 1 },
+        { x = 20, y = 2, z = 20, cellX = 20, cellZ = 20 },
+      }
+    )
+    local ctx = context()
+    ctx.world.player = { cellX = 1, cellZ = 1 }
+    T.equal(renderer:instances(command, ctx), true)
+    local first = voxel.draws[1].mesh
+
+    ctx.world.player = { cellX = 20, cellZ = 20 }
+    T.equal(renderer:instances(command, ctx), true)
+    local second = voxel.draws[2].mesh
+    T.truthy(first ~= second)
+    T.equal(#voxel.meshes, 2)
+
+    ctx.world.player = { cellX = 1, cellZ = 1 }
+    T.equal(renderer:instances(command, ctx), true)
+    T.equal(voxel.draws[3].mesh, first)
+    T.equal(#voxel.meshes, 2)
+    T.equal(renderer:status().cacheEntries, 2)
+  end)
+
+  T.test("evicts old moving-cutaway variants through the shared LRU", function()
+    local renderer, err, voxel = new_renderer({ max_cache_entries = 2 })
+    T.truthy(renderer, err)
+    local command = instances_command(
+      "instances.cutaway.variant-lru",
+      { primitive = "box", role = "wall", cutaway = true },
+      {
+        { x = 1, y = 2, z = 1, cellX = 1, cellZ = 1 },
+        { x = 20, y = 2, z = 20, cellX = 20, cellZ = 20 },
+        { x = 40, y = 2, z = 40, cellX = 40, cellZ = 40 },
+      }
+    )
+    local ctx = context()
+    for _, cell in ipairs({ 1, 20, 40 }) do
+      ctx.world.player = { cellX = cell, cellZ = cell }
+      T.equal(renderer:instances(command, ctx), true)
+    end
+
+    T.equal(#voxel.meshes, 3)
+    T.equal(renderer:status().cacheEntries, 2)
+    T.equal(voxel.meshes[1].releases, 1)
+    T.equal(voxel.meshes[2].releases, 0)
+    T.equal(voxel.meshes[3].releases, 0)
+    T.truthy(renderer:dispose())
+    for _, mesh in ipairs(voxel.meshes) do T.equal(mesh.releases, 1) end
+  end)
+
+  T.test("accepts a fully cut-away batch without allocation", function()
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    local command = instances_command(
+      "instances.cutaway.empty",
+      { primitive = "box", role = "wall", cutaway = true },
+      { { x = 2, y = 2, z = 2, cellX = 2, cellZ = 2 } }
+    )
+    local ctx = context()
+    ctx.world.player = { cellX = 2, cellZ = 2 }
+    T.equal(renderer:instances(command, ctx), true)
+    T.equal(#voxel.meshes, 0)
+    T.equal(#voxel.draws, 0)
+    T.equal(renderer:status().cacheEntries, 0)
+
+    ctx.world.player = { cellX = 20, cellZ = 20 }
+    T.equal(renderer:instances(command, ctx), true)
+    T.equal(#voxel.meshes, 1)
+    T.equal(#voxel.draws, 1)
+  end)
+
   T.test("builds deterministic procedural stars within the item limit", function()
     local renderer, err, voxel = new_renderer({ max_items = 10 })
     T.truthy(renderer, err)

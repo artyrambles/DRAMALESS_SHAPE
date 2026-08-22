@@ -26,7 +26,7 @@ the read-only legacy check succeeds.
 | `lib/VoxelScene.lua` | Adds the three certified render seams and exact camera-frame cleanup. |
 | `lib/VoxelCompanionApi.lua` | Vendors the frozen pure-Lua v1 dispatcher. |
 | `lib/VoxelCompanionHost.lua` | Implements capability negotiation, snapshots, facades, lifecycle, canonical dispatch, camera deltas, command validation, strict backend results, limits, and legacy refusal. |
-| `lib/VoxelCompanionRenderer.lua` | Implements bounded mesh, instance, and billboard rendering, collision-safe keyed caching, byte-budget LRU, and ownership. |
+| `lib/VoxelCompanionRenderer.lua` | Implements bounded mesh, instance, and billboard rendering, player-relative KFP ceiling and wall cutaways, collision-safe keyed caching, byte-budget LRU, and ownership. |
 | `docs/voxel-companion-api-v1.md` | Vendors the central normative v1 contract and portable draw schema. |
 | `README.md` | Adds user-facing integration and legacy-refusal notes. |
 | `CHANGELOG.md` | Adds an unreleased integration record without a version bump. |
@@ -67,6 +67,10 @@ the read-only legacy check succeeds.
 - Declarative meshes use safe 64-byte cache keys, reject content or context
   collisions, and use a byte-bounded LRU. The default byte budget is 48 MiB
   and the hard maximum is 256 MiB.
+- KFP `box` instances marked as a `ceiling` or `wall` cutaway are omitted when
+  they are within four cells of `context.world.player` on both map axes.
+  Player movement selects a bounded cache variant. A missing player or item
+  cell keeps geometry visible.
 - The shared ROM-free baseline fixture executes all six mesh primitives, all
   15 instance primitives, explicit billboards, and deterministic procedural
   stars through both the adapter and real renderer. A second pass proves cache
@@ -82,7 +86,7 @@ From the repository root:
 
 ```text
 luajit tools/run_tests.lua
-63 passed, 0 failed, 63 selected (4 files)
+70 passed, 0 failed, 70 selected (4 files)
 
 luajit -e "assert(loadfile(...))"
 syntax ok

@@ -451,6 +451,71 @@ return function(T)
     for _, mesh in ipairs(voxel.meshes) do T.equal(mesh.releases, 1) end
   end)
 
+  T.test("passes live public player cells to cutaway rendering", function()
+    local voxel = { meshes = {}, draws = {} }
+    function voxel.newMesh(vertices, indices)
+      local mesh = { vertices = vertices, indices = indices, releases = 0 }
+      function mesh:release() self.releases = self.releases + 1 end
+      voxel.meshes[#voxel.meshes + 1] = mesh
+      return mesh
+    end
+    function voxel.draw(mesh) voxel.draws[#voxel.draws + 1] = mesh end
+    function voxel.glass() end
+    function voxel.depth() end
+    local Renderer = load_with_argument("lib/VoxelCompanionRenderer.lua", {
+      require = function(name) error("unexpected module request: " .. name, 2) end,
+    })
+    local backend, backend_error = Renderer.new({
+      voxel3d = voxel,
+      mat4 = {},
+      graphics = { setColor = function() end, setDepthMode = function() end },
+    })
+    T.truthy(backend, backend_error)
+    local env = new_environment(T, { backend = backend })
+    local state = new_state()
+    T.truthy(env.host:update(1 / 60, 3, state))
+    local items = {
+      { x = 0, y = 4, z = 1, cellX = 0, cellZ = 1 },
+      { x = 10, y = 4, z = 10, cellX = 10, cellZ = 10 },
+    }
+    local cutaway = draw_packet("instances", "opaque_after_terrain", 1, {
+      cacheKey = "adapter:cutaway:live",
+      prototype = { primitive = "box", role = "ceiling", cutaway = true },
+      items = items,
+    })
+    local sealed = draw_packet("instances", "opaque_after_terrain", 2, {
+      cacheKey = "adapter:cutaway:sealed",
+      prototype = { primitive = "box", role = "ceiling", cutaway = false },
+      items = items,
+    })
+    local handle, register_error = env.host:provider().register(extension(
+      "cutaway.live-context",
+      { render = { opaque_after_terrain = function(context)
+        context.draw.instances(cutaway, context)
+        context.draw.instances(sealed, context)
+      end } }
+    ))
+    T.truthy(handle, register_error)
+
+    T.truthy(begin_frame(env, state))
+    local report, render_error = env.host:dispatchRenderPhase("opaque_after_terrain")
+    T.truthy(report, render_error)
+    T.truthy(env.host:endWorldFrame("cutaway-near-first"))
+    T.equal(#voxel.meshes, 2)
+    T.equal(#voxel.meshes[1].vertices, 24)
+    T.equal(#voxel.meshes[2].vertices, 48)
+
+    state.player.cellX, state.player.cellY = 10, 10
+    T.truthy(begin_frame(env, state))
+    report, render_error = env.host:dispatchRenderPhase("opaque_after_terrain")
+    T.truthy(report, render_error)
+    T.truthy(env.host:endWorldFrame("cutaway-near-second"))
+    T.equal(#voxel.meshes, 3)
+    T.equal(#voxel.meshes[3].vertices, 24)
+    T.equal(voxel.draws[2], voxel.draws[4])
+    T.equal(backend:status().cacheEntries, 3)
+  end)
+
   T.test("borrows an opaque extension texture for one validated draw call", function()
     local backend = new_backend()
     local released, saw_texture = 0, false

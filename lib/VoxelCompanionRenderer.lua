@@ -23,6 +23,7 @@ local MAX_VERTICES = 786432
 local VERTEX_BYTES = 24
 local INDEX_BYTES = 4
 local MESH_OVERHEAD_BYTES = 256
+local CUTAWAY_RADIUS_CELLS = 4
 
 local CACHE_KEY_PATTERN = "^[A-Za-z0-9%._:%-]+$"
 local SKIP_RESOURCE_FIELD = {
@@ -328,6 +329,38 @@ local function item_position(item)
     finite(item.z or 0, "item.z")
 end
 
+local function integer_or_nil(value)
+  value = tonumber(value)
+  if not value or value ~= value or value == math.huge or value == -math.huge then
+    return nil
+  end
+  return math.floor(value)
+end
+
+-- KFP marks only its interior box batches as player-relative cutaways. The
+-- normalized public world view carries both ends of this comparison, so the
+-- renderer does not need host-private state. Missing coordinates fail open:
+-- geometry stays visible instead of making a room disappear on weak context.
+local function cutaway_player(prototype, context)
+  if type(prototype) ~= "table" or prototype.primitive ~= "box"
+      or prototype.cutaway ~= true
+      or (prototype.role ~= "ceiling" and prototype.role ~= "wall") then
+    return nil, nil
+  end
+  local world = type(context) == "table" and context.world or nil
+  local player = type(world) == "table" and world.player or nil
+  if type(player) ~= "table" then return nil, nil end
+  return integer_or_nil(player.cellX), integer_or_nil(player.cellZ)
+end
+
+local function item_is_cutaway(item, player_x, player_z)
+  if player_x == nil or player_z == nil or type(item) ~= "table" then return false end
+  local cell_x, cell_z = integer_or_nil(item.cellX), integer_or_nil(item.cellZ)
+  if cell_x == nil or cell_z == nil then return false end
+  return math.abs(player_x - cell_x) <= CUTAWAY_RADIUS_CELLS
+    and math.abs(player_z - cell_z) <= CUTAWAY_RADIUS_CELLS
+end
+
 local function facing_yaw(value)
   value = type(value) == "string" and value:lower() or "south"
   if value == "north" or value == "up" then return math.pi end
@@ -527,11 +560,12 @@ function Renderer:_evictFor(cost)
   end
 end
 
-function Renderer:_cached(command, context, build)
+function Renderer:_cached(command, context, build, variant)
   if self._disposed then return nil, "Voxel Companion renderer is disposed" end
   local key, key_error = cache_key(command)
   if not key then return nil, key_error end
   local signature = content_signature(command, context)
+  if variant ~= nil then key = key .. "\0" .. tostring(variant) end
   self._cache_sequence = self._cache_sequence + 1
   local entry = self._cache[key]
   if entry then
@@ -624,14 +658,32 @@ end
 function Renderer:instances(command, context)
   if self._disposed then return nil, "Voxel Companion renderer is disposed" end
   if type(command) ~= "table" then return nil, "instances command must be a table" end
+  context = context or {}
   local count = dense_array(command.items, "instances.items", self._max_items)
   if count == 0 then return true end
-  local material = material_info(command, context or {})
-  local mesh, err = self:_cached(command, context or {}, function()
+  local player_x, player_z = cutaway_player(command.prototype, context)
+  local variant
+  if player_x ~= nil and player_z ~= nil then
+    variant = ("cutaway:%d:%d"):format(player_x, player_z)
+    local visible = 0
+    for index = 1, count do
+      if not item_is_cutaway(command.items[index], player_x, player_z) then
+        visible = visible + 1
+      end
+    end
+    if visible == 0 then return true end
+  end
+  local material = material_info(command, context)
+  local mesh, err = self:_cached(command, context, function()
     local builder = new_builder(material.uv, self._max_vertices)
-    for index = 1, count do emit_prototype(builder, command.prototype, command.items[index], context or {}) end
+    for index = 1, count do
+      local item = command.items[index]
+      if not item_is_cutaway(item, player_x, player_z) then
+        emit_prototype(builder, command.prototype, item, context)
+      end
+    end
     return self:_finish(builder)
-  end)
+  end, variant)
   if not mesh then return nil, err end
   return self:_submit(mesh, material)
 end

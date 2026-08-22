@@ -10,6 +10,8 @@
   service facades, and batched mesh, instance, and billboard drawing.
 - Added deterministic extension ordering, borrowed-context checks, isolated
   faults, bounded caches, and exact derived-resource release.
+- Added KFP ceiling and wall cutaways from the normalized player cell, with
+  bounded cache variants as the player moves and fail-open incomplete context.
 - Added a read-only refusal for the historical `Ceiling.draw` KFP splice.
 - Added the frozen API conformance suite and host adapter, renderer, fixture,
   and pipeline-ownership tests.
