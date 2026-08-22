@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Added the Voxel Companion API v1 provider without changing the 2.0.3
+  manifest or taking ownership from the official `voxel` render pipeline.
+- Added certified `background`, `opaque_after_terrain`, and
+  `translucent_after_actors` extension seams.
+- Added bounded world snapshots, strictly additive camera deltas, normalized
+  service facades, and batched mesh, instance, and billboard drawing.
+- Corrected snapshot scenery semantics so KFP receives authored tree,
+  boulder-tree, and mountain-support tags instead of guesses from generic
+  cylinder, cliff, canopy, stump, planter, or roof render classes.
+- Added deterministic extension ordering, borrowed-context checks, isolated
+  faults, bounded caches, and exact derived-resource release.
+- Added KFP ceiling and wall cutaways from the normalized player cell, with
+  bounded cache variants as the player moves and fail-open incomplete context.
+- Added a read-only refusal for the historical `Ceiling.draw` KFP splice.
+- Added the frozen API conformance suite and host adapter, renderer, fixture,
+  and pipeline-ownership tests.
+
 ## 2.0.0 - Big Fat Cleanup Time
 
 **AKA: The King Is Dead, Long Live The King.**
