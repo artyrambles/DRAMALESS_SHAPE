@@ -319,6 +319,19 @@ return function(T)
     T.equal(changes[3].id, "CERULEAN_CITY")
   end)
 
+  T.test("uses the public game ready save version for world identity", function()
+    local env = new_environment(T)
+    local capturedGame
+    local handle, err = env.host:provider().register(extension("yellow-world", {
+      requires = { "world_snapshot", "render_phases" },
+      worldChanged = function(snapshot) capturedGame = snapshot.game end,
+    }))
+    T.truthy(handle, err)
+    env.host:setGame({ save = { version = "yellow" }, data = {} })
+    T.truthy(env.host:update(1 / 60, 3, new_state("PALLET_TOWN")))
+    T.equal(capturedGame, "yellow")
+  end)
+
   T.test("dispatches safe phases through the existing frame and restores camera", function()
     local env = new_environment(T)
     local state = new_state()

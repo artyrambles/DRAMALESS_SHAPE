@@ -459,9 +459,11 @@ end
 
 function Host:_gameId(map)
   if self._game_id then return normalized_game_id(self._game_id) end
+  local save = self._game and self._game.save
   local data = self._game and self._game.data
   return normalized_game_id(
-    (data and (data.game or data.version or data.id))
+    (save and save.version)
+      or (data and (data.game or data.version or data.id))
       or (map and map.game)
       or "red"
   )
