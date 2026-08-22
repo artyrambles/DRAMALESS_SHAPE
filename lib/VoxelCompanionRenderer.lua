@@ -24,6 +24,15 @@ local VERTEX_BYTES = 24
 local INDEX_BYTES = 4
 local MESH_OVERHEAD_BYTES = 256
 local CUTAWAY_RADIUS_CELLS = 4
+local PANORAMA_RADIUS = 900
+local PANORAMA_SEGMENTS = 64
+local PANORAMA_BOTTOM = -1
+local PANORAMA_TOP = 300
+local PANORAMA_DEEP = -1400
+local CLOUD_SPAN = 7200
+local CLOUD_CELLS = 24
+local CLOUD_LIFT = 900
+local CLOUD_HEIGHTS = { 210, 300, 410 }
 
 local CACHE_KEY_PATTERN = "^[A-Za-z0-9%._:%-]+$"
 local SKIP_RESOURCE_FIELD = {
@@ -256,6 +265,19 @@ local function new_builder(uv, max_vertices)
     self.quads = self.quads + 1
   end
 
+  function builder:quad_uv(a, b, c, d, shade, auv, buv, cuv, duv)
+    self:check(4)
+    local base = #self.vertices
+    self.vertices[base + 1] = { a[1], a[2], a[3], auv[1], auv[2], shade }
+    self.vertices[base + 2] = { b[1], b[2], b[3], buv[1], buv[2], shade }
+    self.vertices[base + 3] = { c[1], c[2], c[3], cuv[1], cuv[2], shade }
+    self.vertices[base + 4] = { d[1], d[2], d[3], duv[1], duv[2], shade }
+    local map = self.indices
+    map[#map + 1], map[#map + 2], map[#map + 3] = base + 1, base + 2, base + 3
+    map[#map + 1], map[#map + 2], map[#map + 3] = base + 1, base + 3, base + 4
+    self.quads = self.quads + 1
+  end
+
   function builder:triangle(a, b, c, shade)
     self:check(3)
     local u0, v0, u1, v1 = self.uv[1], self.uv[2], self.uv[3], self.uv[4]
@@ -310,6 +332,80 @@ local function add_crossed(builder, x, y, z, width, height)
   add_vertical(builder, x, y, z, width, height, math.pi * 0.5)
 end
 
+local function unit(value, fallback, name)
+  value = value == nil and fallback or value
+  value = finite(value, name)
+  if value < 0 or value > 1 then
+    error((name or "value") .. " must be between zero and one", 3)
+  end
+  return value
+end
+
+-- A panorama's pixel width is a quality choice, not a world-space size.
+-- Map the image once around a player-centred ring. The fixed physical scale
+-- matches the legacy composition and prevents four repeated paintings and
+-- the independent-quad corner gaps produced by the old box approximation.
+local function add_panorama(builder, deep_skirt)
+  for index = 0, PANORAMA_SEGMENTS - 1 do
+    local u0, u1 = index / PANORAMA_SEGMENTS, (index + 1) / PANORAMA_SEGMENTS
+    local a0, a1 = u0 * math.pi * 2, u1 * math.pi * 2
+    local x0, z0 = math.cos(a0) * PANORAMA_RADIUS, math.sin(a0) * PANORAMA_RADIUS
+    local x1, z1 = math.cos(a1) * PANORAMA_RADIUS, math.sin(a1) * PANORAMA_RADIUS
+    builder:quad_uv(
+      { x1, PANORAMA_BOTTOM, z1 }, { x0, PANORAMA_BOTTOM, z0 },
+      { x0, PANORAMA_TOP, z0 }, { x1, PANORAMA_TOP, z1 }, FACE_SHADE[5],
+      { u1, 1 }, { u0, 1 }, { u0, 0 }, { u1, 0 }
+    )
+    if deep_skirt then
+      -- Clamp to the image's bottom row. This seals the below-world view
+      -- without stretching the full illustration down into a dark wedge.
+      builder:quad_uv(
+        { x1, PANORAMA_DEEP, z1 }, { x0, PANORAMA_DEEP, z0 },
+        { x0, PANORAMA_BOTTOM, z0 }, { x1, PANORAMA_BOTTOM, z1 }, FACE_SHADE[5],
+        { u1, 1 }, { u0, 1 }, { u0, 1 }, { u1, 1 }
+      )
+    end
+  end
+end
+
+-- Binary-coverage cloud textures repeat per cell over a high deck. Raising
+-- each corner by its squared radius keeps the far deck above the horizon.
+-- The texture handle stays borrowed; only the derived mesh is cached.
+local function add_cloud_layer(builder, layer, density)
+  layer = bounded_integer(layer, 1, 1, #CLOUD_HEIGHTS)
+  density = unit(density, 1, "cloud density")
+  local half, step = CLOUD_SPAN * 0.5, CLOUD_SPAN / CLOUD_CELLS
+  -- Density must not punch 300x300 holes into the deck. Keep one continuous
+  -- topology and make lower tiers subtler by lifting and flattening the whole
+  -- sheet. Material RGB supplies the matching opaque visual attenuation.
+  local height = CLOUD_HEIGHTS[layer] + (1 - density) * 96
+  local lift_scale = 0.8 + density * 0.2
+  local function lift(x, z)
+    local rx, rz = x / half, z / half
+    local radius = math.min(1.2, math.sqrt(rx * rx + rz * rz))
+    return height + radius * radius * CLOUD_LIFT * lift_scale
+  end
+  local function emit(grid_x, grid_z)
+    local x0, z0 = -half + grid_x * step, -half + grid_z * step
+    local x1, z1 = x0 + step, z0 + step
+    builder:quad_uv(
+      { x0, lift(x0, z1), z1 }, { x1, lift(x1, z1), z1 },
+      { x1, lift(x1, z0), z0 }, { x0, lift(x0, z0), z0 }, FACE_SHADE[3],
+      { 0, 1 }, { 1, 1 }, { 1, 0 }, { 0, 0 }
+    )
+  end
+  for grid_z = 0, CLOUD_CELLS - 1 do
+    for grid_x = 0, CLOUD_CELLS - 1 do
+      local x0, z0 = -half + grid_x * step, -half + grid_z * step
+      local x1, z1 = x0 + step, z0 + step
+      local middle_x, middle_z = (x0 + x1) * 0.5 / half, (z0 + z1) * 0.5 / half
+      if math.sqrt(middle_x * middle_x + middle_z * middle_z) <= 1.02 then
+        emit(grid_x, grid_z)
+      end
+    end
+  end
+end
+
 local function add_pyramid(builder, x, y, z, width, height, depth)
   width, height, depth = positive(width, 1, "pyramid width"),
     positive(height, 1, "pyramid height"), positive(depth, width, "pyramid depth")
@@ -342,21 +438,33 @@ end
 -- renderer does not need host-private state. Missing coordinates fail open:
 -- geometry stays visible instead of making a room disappear on weak context.
 local function cutaway_player(prototype, context)
-  if type(prototype) ~= "table" or prototype.primitive ~= "box"
-      or prototype.cutaway ~= true
-      or (prototype.role ~= "ceiling" and prototype.role ~= "wall") then
+  if type(prototype) ~= "table" or prototype.cutaway ~= true then
+    return nil, nil
+  end
+  local interior = prototype.primitive == "box"
+    and (prototype.role == "ceiling" or prototype.role == "wall")
+  local canopy = prototype.primitive == "canopy"
+  if not interior and not canopy then
     return nil, nil
   end
   local world = type(context) == "table" and context.world or nil
+  if canopy and (type(world) ~= "table" or world.mode ~= "first_person") then
+    return nil, nil
+  end
   local player = type(world) == "table" and world.player or nil
   if type(player) ~= "table" then return nil, nil end
   return integer_or_nil(player.cellX), integer_or_nil(player.cellZ)
 end
 
-local function item_is_cutaway(item, player_x, player_z)
+local function item_is_cutaway(item, player_x, player_z, role)
   if player_x == nil or player_z == nil or type(item) ~= "table" then return false end
   local cell_x, cell_z = integer_or_nil(item.cellX), integer_or_nil(item.cellZ)
   if cell_x == nil or cell_z == nil then return false end
+  -- The ceiling opens a local square above the player. Boundary walls use
+  -- the legacy Sims cross-section: the player's row and rows south of it
+  -- melt, while the far/north shell stays visible. Applying the ceiling
+  -- radius to walls can remove every wall of a small room.
+  if role == "wall" then return cell_z >= player_z end
   return math.abs(player_x - cell_x) <= CUTAWAY_RADIUS_CELLS
     and math.abs(player_z - cell_z) <= CUTAWAY_RADIUS_CELLS
 end
@@ -445,15 +553,9 @@ local function emit_mesh_geometry(builder, geometry, context)
     add_box(builder, -thick * 0.5, -skirt * 0.5, cz, thick, skirt, depth)
     add_box(builder, width + thick * 0.5, -skirt * 0.5, cz, thick, skirt, depth)
   elseif primitive == "panorama" then
-    local radius = math.max(width, depth) * 0.7 + size * 8
-    local height = size * 10
-    add_vertical(builder, cx, -size, cz - radius, radius * 2, height, 0)
-    add_vertical(builder, cx, -size, cz + radius, radius * 2, height, math.pi)
-    add_vertical(builder, cx - radius, -size, cz, radius * 2, height, math.pi * 0.5)
-    add_vertical(builder, cx + radius, -size, cz, radius * 2, height, -math.pi * 0.5)
+    add_panorama(builder, geometry.deepSkirt == true)
   elseif primitive == "cloud_layer" then
-    add_plane(builder, cx, size * (5 + finite(geometry.layer or 1, "cloud layer")), cz,
-      width + size * 16, depth + size * 16)
+    add_cloud_layer(builder, geometry.layer, geometry.density)
   elseif primitive == "rainbow" then
     add_vertical(builder, cx, size * 2, cz - depth * 0.45, math.max(size * 8, width * 0.6),
       size * 5, 0)
@@ -527,6 +629,7 @@ function Renderer.new(options)
     _cache_sequence = 0,
     _disposed = false,
     _translucent = false,
+    _background = false,
   }, Renderer)
 end
 
@@ -619,12 +722,63 @@ function Renderer:_restoreMaterial()
   if self._voxel3d.glass then pcall(self._voxel3d.glass, true) end
 end
 
-function Renderer:_submit(mesh, material, model)
+function Renderer:_discardMesh(mesh)
+  for key, entry in pairs(self._cache) do
+    if entry.mesh == mesh then
+      self:_remove(key)
+      return true
+    end
+  end
+  return false
+end
+
+function Renderer:_submit(mesh, material, model, presentation, host_owned)
   if self._disposed then return nil, "Voxel Companion renderer is disposed" end
+  local unlit = presentation and presentation.unlit
   self:_setMaterial(material)
-  self._voxel3d.draw(mesh, material.texture, model)
+  if unlit and self._voxel3d.lighting then pcall(self._voxel3d.lighting, false) end
+  if unlit and self._voxel3d.seams then pcall(self._voxel3d.seams, false) end
+  local ok, draw_error = pcall(self._voxel3d.draw, mesh, material.texture, model)
+  local detached, detach_error = true, nil
+  if host_owned and material.texture ~= nil and type(mesh.setTexture) == "function" then
+    -- Voxel3D.draw binds its texture to the LOVE mesh. The command texture is
+    -- borrowed only for this callback, so remove that attachment immediately,
+    -- even when the driver draw throws. The mesh cache must contain geometry,
+    -- never an extension-owned image handle.
+    detached, detach_error = pcall(mesh.setTexture, mesh)
+  end
+  if not detached then self:_discardMesh(mesh) end
+  if unlit and self._voxel3d.lighting then pcall(self._voxel3d.lighting, true) end
+  if unlit and self._voxel3d.seams then pcall(self._voxel3d.seams, true) end
   self:_restoreMaterial()
+  if not detached then
+    local detail = "could not detach borrowed texture: " .. tostring(detach_error)
+    if not ok then detail = tostring(draw_error) .. "; " .. detail end
+    error(detail, 0)
+  end
+  if not ok then error(draw_error, 0) end
   return true
+end
+
+function Renderer:_skyModel(context, parallax, seed)
+  local world = type(context) == "table" and context.world or nil
+  local player = type(world) == "table" and world.player or nil
+  local translate = self._mat4 and self._mat4.translate
+  if type(player) ~= "table" or type(translate) ~= "function" then return nil end
+  local factor = 1
+  if parallax ~= nil then
+    factor = 1 - math.max(-2, math.min(2, finite(parallax, "cloud parallax")))
+  end
+  local offset_x, offset_z = 0, 0
+  if seed ~= nil then
+    local state = math.floor(finite(seed, "cloud seed")) % 2147483647
+    state = (state * 48271 + 12820163) % 2147483647
+    offset_x = (state / 2147483647 - 0.5) * (CLOUD_SPAN / CLOUD_CELLS)
+    state = (state * 48271 + 44488) % 2147483647
+    offset_z = (state / 2147483647 - 0.5) * (CLOUD_SPAN / CLOUD_CELLS)
+  end
+  return translate(finite(player.x or 0, "player.x") * factor + offset_x, 0,
+    finite(player.z or 0, "player.z") * factor + offset_z)
 end
 
 function Renderer:resolveMaterial(material, context)
@@ -644,15 +798,39 @@ function Renderer:mesh(command, context)
   local material = material_info(command, context or {})
   local resource = command.mesh or command.resource
   if resource ~= nil then
+    if material.texture ~= nil then
+      return nil, "direct opaque mesh/resource cannot use a borrowed texture"
+    end
     return self:_submit(resource, material, command.model)
+  end
+  local geometry = type(command.geometry) == "table" and command.geometry or {}
+  if geometry.primitive == "cloud_layer" and command.texture == nil then
+    return nil, "cloud_layer geometry requires a binary-coverage texture"
+  end
+  if geometry.primitive == "panorama" then
+    -- Keep presentation alpha opaque. The borrowed image alone defines the
+    -- horizon silhouette; partial material alpha becomes ordered coverage on
+    -- voxel shaders and caused the visible checkerboard bands.
+    material.color = geometry.distanceHaze == true
+      and { 0.92, 0.94, 0.98, 1 } or { 1, 1, 1, 1 }
+  elseif geometry.primitive == "cloud_layer" then
+    local density = unit(geometry.density, 1, "cloud density")
+    material.color = { 0.72 + density * 0.21, 0.82 + density * 0.14, 1, 1 }
+    if density == 0 then return true end
   end
   local mesh, err = self:_cached(command, context or {}, function()
     local builder = new_builder(material.uv, self._max_vertices)
-    emit_mesh_geometry(builder, command.geometry, context or {})
+    emit_mesh_geometry(builder, geometry, context or {})
     return self:_finish(builder)
   end)
   if not mesh then return nil, err end
-  return self:_submit(mesh, material)
+  if geometry.primitive == "panorama" then
+    return self:_submit(mesh, material, self:_skyModel(context), { unlit = true }, true)
+  elseif geometry.primitive == "cloud_layer" then
+    return self:_submit(mesh, material,
+      self:_skyModel(context, geometry.parallax, geometry.seed), { unlit = true }, true)
+  end
+  return self:_submit(mesh, material, nil, nil, true)
 end
 
 function Renderer:instances(command, context)
@@ -667,7 +845,8 @@ function Renderer:instances(command, context)
     variant = ("cutaway:%d:%d"):format(player_x, player_z)
     local visible = 0
     for index = 1, count do
-      if not item_is_cutaway(command.items[index], player_x, player_z) then
+      if not item_is_cutaway(command.items[index], player_x, player_z,
+          command.prototype.role or command.prototype.primitive) then
         visible = visible + 1
       end
     end
@@ -678,14 +857,15 @@ function Renderer:instances(command, context)
     local builder = new_builder(material.uv, self._max_vertices)
     for index = 1, count do
       local item = command.items[index]
-      if not item_is_cutaway(item, player_x, player_z) then
+      if not item_is_cutaway(item, player_x, player_z,
+          command.prototype.role or command.prototype.primitive) then
         emit_prototype(builder, command.prototype, item, context)
       end
     end
     return self:_finish(builder)
   end, variant)
   if not mesh then return nil, err end
-  return self:_submit(mesh, material)
+  return self:_submit(mesh, material, nil, nil, true)
 end
 
 function Renderer:billboards(command, context)
@@ -709,20 +889,26 @@ function Renderer:billboards(command, context)
     return self:_finish(builder)
   end)
   if not mesh then return nil, err end
-  return self:_submit(mesh, material)
+  return self:_submit(mesh, material, nil, nil, true)
 end
 
 function Renderer:beginPhase(phase)
   if self._disposed then error("Voxel Companion renderer is disposed", 2) end
   self._translucent = phase == "translucent_after_actors"
-  if self._translucent and self._graphics and type(self._graphics.setDepthMode) == "function" then
+  self._background = phase == "background"
+  if self._background and self._graphics and type(self._graphics.setDepthMode) == "function" then
+    self._graphics.setDepthMode("lequal", false)
+  elseif self._translucent and self._graphics and type(self._graphics.setDepthMode) == "function" then
     self._graphics.setDepthMode("lequal", false)
   end
 end
 
 function Renderer:endPhase()
-  if self._translucent and self._voxel3d.depth then pcall(self._voxel3d.depth, "test") end
+  if (self._translucent or self._background) and self._voxel3d.depth then
+    pcall(self._voxel3d.depth, "test")
+  end
   self._translucent = false
+  self._background = false
   self:_restoreMaterial()
 end
 

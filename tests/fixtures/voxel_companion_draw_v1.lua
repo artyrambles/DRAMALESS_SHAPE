@@ -79,6 +79,7 @@ add("background", {
 add("background", {
   kind = "mesh",
   material = "golden:clouds",
+  texture = GOLDEN_TEXTURE,
   geometry = { primitive = "cloud_layer", layer = 2, parallax = 0.2,
     density = 0.6, seed = 42 },
 })

@@ -12,7 +12,7 @@ published.
 - Manifest change: none
 - External push or pull request: none
 - Frozen dispatcher hash:
-  `864DA19493F773A52FB2111EFC02D79E9882B87C5A762AF5B124326A74A32B33`
+  `6FDED9C804298AB064DB61B908382BE7C9A74AD29D611444C33E1BCC53A33D26`
 
 The official `voxel` pipeline still owns `drawWorld`. The integration adds
 callbacks inside that pass and exports `mod.exports.voxel_companion` only after
@@ -26,7 +26,7 @@ the read-only legacy check succeeds.
 | `lib/VoxelScene.lua` | Adds the three certified render seams and exact camera-frame cleanup. |
 | `lib/VoxelCompanionApi.lua` | Vendors the frozen pure-Lua v1 dispatcher. |
 | `lib/VoxelCompanionHost.lua` | Implements capability negotiation, snapshots, facades, lifecycle, canonical dispatch, camera deltas, command validation, strict backend results, limits, and legacy refusal. |
-| `lib/VoxelCompanionRenderer.lua` | Implements bounded mesh, instance, and billboard rendering, player-relative KFP ceiling and wall cutaways, collision-safe keyed caching, byte-budget LRU, and ownership. |
+| `lib/VoxelCompanionRenderer.lua` | Implements bounded mesh, instance, and billboard rendering, player-relative KFP ceiling, wall, and canopy cutaways, one-wrap panorama presentation, collision-safe keyed caching, byte-budget LRU, and ownership. |
 | `docs/voxel-companion-api-v1.md` | Vendors the central normative v1 contract and portable draw schema. |
 | `README.md` | Adds user-facing integration and legacy-refusal notes. |
 | `CHANGELOG.md` | Adds an unreleased integration record without a version bump. |
@@ -64,13 +64,35 @@ the read-only legacy check succeeds.
 - Derived meshes release exactly once. Borrowed and extension-owned resources
   are not released.
 - Callback commands and opaque texture handles are not retained after a draw.
+  `Voxel3D.draw` temporarily binds a borrowed texture to a host-owned mesh;
+  the renderer detaches it immediately on both success and fault paths before
+  that mesh can remain in the cache. If detachment fails, the host evicts and
+  releases the cached mesh. A direct extension-owned mesh or resource cannot
+  be combined with a borrowed texture and is rejected before mutation.
 - Declarative meshes use safe 64-byte cache keys, reject content or context
   collisions, and use a byte-bounded LRU. The default byte budget is 48 MiB
   and the hard maximum is 256 MiB.
-- KFP `box` instances marked as a `ceiling` or `wall` cutaway are omitted when
-  they are within four cells of `context.world.player` on both map axes.
-  Player movement selects a bounded cache variant. A missing player or item
-  cell keeps geometry visible.
+- KFP ceiling cutaways open a four-cell square around
+  `context.world.player`. Wall cutaways retain the far shell and melt the
+  player's row southward, which matches the intended Sims cross-section and
+  does not erase every wall in a small room. Player movement selects a bounded
+  cache variant. A missing player or item cell keeps geometry visible.
+- A cutaway canopy opens the same four-cell square only in first-person mode.
+  Other camera modes keep the complete canopy.
+- A textured panorama is unlit, does not use voxel seams, tests depth without
+  writing it, and maps its texture once around a fixed 900-unit ring centred
+  on the current public player pose. `sourceWidth` and `targetWidth` remain
+  texture-quality metadata and never change the physical ring scale.
+- A `cloud_layer` requires a borrowed binary-coverage texture. The renderer
+  maps it over a high, curved, player-centred deck with depth writes, scene
+  lighting, and voxel seams all disabled. An untextured packet fails before mesh
+  allocation, and the renderer never retains or releases the borrowed image.
+  High, Balanced, and Low densities keep the same continuous topology, so no
+  300-by-300-unit grid hole can appear. Density changes only bounded deck
+  height, curvature, and opaque RGB tint; material alpha stays 1. `seed`
+  supplies a bounded deterministic whole-deck offset, and `parallax` supplies
+  a clamped player-relative offset. Zero density is an allocation-free
+  accepted no-op.
 - The shared ROM-free baseline fixture executes all six mesh primitives, all
   15 instance primitives, explicit billboards, and deterministic procedural
   stars through both the adapter and real renderer. A second pass proves cache
@@ -86,7 +108,7 @@ From the repository root:
 
 ```text
 luajit tools/run_tests.lua
-70 passed, 0 failed, 70 selected (4 files)
+83 passed, 0 failed, 83 selected (4 files)
 
 luajit -e "assert(loadfile(...))"
 syntax ok

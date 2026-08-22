@@ -29,7 +29,7 @@ A host can expose the reference dispatcher or a conforming implementation:
 ```lua
 host.exports.voxel_companion = {
   api = 1,
-  host = { id = "DRAMATIC_SHAPE", version = "1.9.0" },
+  host = { id = "DRAMALESS_SHAPE", version = "2.0.3" },
   capabilities = { world_snapshot = 1, camera_delta = 1, ... },
   register = function(spec) ... end,
 }
@@ -40,8 +40,8 @@ The reference module has this constructor:
 ```lua
 local Companion = load_companion_api_v1()
 local dispatcher = Companion.new({
-  host_id = "DRAMATIC_SHAPE",
-  host_version = "1.9.0",
+  host_id = "DRAMALESS_SHAPE",
+  host_version = "2.0.3",
   capabilities = {
     "render_phases",
     "camera_delta",
@@ -219,8 +219,10 @@ dispatch and passes only an allowed opaque handle for the current draw call.
 
 A mesh command adds `geometry` or one of the opaque `mesh` and `resource`
 handles. It cannot combine declarative `geometry` with either direct handle,
-and it cannot contain both direct handles. An optional opaque `model` handle is
-an adjunct resource. Portable geometry has one of these exact shapes:
+it cannot contain both direct handles, and a direct handle cannot be combined
+with `command.texture`. That combination would require a host to mutate one
+borrowed resource to attach another. An optional opaque `model` handle is an
+adjunct resource. Portable geometry has one of these exact shapes:
 
 | Primitive | Fields after `primitive` |
 | --- | --- |
@@ -228,8 +230,30 @@ an adjunct resource. Portable geometry has one of these exact shapes:
 | `plane` | Required positive `width`, `depth`; optional finite `x`, `y`, `z`. |
 | `world_apron` | Required positive `width`, `depth`, `skirtDepth`; optional plain `neighbors`. |
 | `panorama` | Required positive `sourceWidth`, `targetWidth`; optional Boolean `deepSkirt`, `distanceHaze`; requires `command.texture`. |
-| `cloud_layer` | Required positive-integer `layer`, finite `parallax` and `seed`, and `density` from 0 through 1. |
+| `cloud_layer` | Required positive-integer `layer`, finite `parallax` and `seed`, and `density` from 0 through 1; requires `command.texture`. |
 | `rainbow` | Required finite `seed`. |
+
+`sourceWidth` and `targetWidth` are texture pixel dimensions. They describe
+the source panorama and the selected quality variant. They are not world-space
+dimensions, radii, diameters, or camera distances. A host must use a bounded,
+resolution-independent distant enclosure. Changing only the quality tier must
+change texture detail without changing the panorama's apparent scale or
+vertical placement.
+
+A panorama follows the camera horizontally, stays behind host terrain and
+actors, tests depth, and does not write depth. It must wrap without a visible
+vertical seam. Transparent texels reveal the host sky; they must not reveal a
+missing-texture pattern, alpha-test pattern, or uninitialized target. A
+`deepSkirt` closes views below the painted band without stretching the
+panorama's final texture row into visible scenery. `distanceHaze` can tint the
+panorama but must preserve its alpha and borrowed-texture lifetime.
+
+A `cloud_layer` is a deterministic, resolution-independent sky contribution.
+It stays above the camera and behind world geometry, tests depth, does not
+write depth, and cannot place an opaque or screen-covering fallback polygon in
+front of the scene. Multiple layers must not expose their mesh boundaries or
+compound alpha into large geometric facets. A host that cannot meet these
+rules rejects the command instead of drawing a misleading placeholder.
 
 ### `instances`
 
@@ -253,6 +277,13 @@ non-empty dense `items` array of at most 8,192 entries. A prototype is one of:
 Each item requires finite `x`, `y`, and `z`. It can also contain integer
 `cellX` and `cellZ`; finite `seed` and `lift`; semantic `side`, `facing`, and
 `kind`; Boolean `summit`; and finite-number or semantic `poster`.
+
+`cutaway=true` is producer intent, not a request for the host to infer a new
+camera policy. A `box` with `role="ceiling"` opens a bounded local area around
+the current player whenever the producer emits that intent. A `box` with
+`role="wall"` keeps a useful far-room shell; it must not erase every wall of a
+small room. A `canopy` cutaway opens only near the player in first-person mode.
+Missing player or cell coordinates fail open and keep geometry visible.
 
 ### `billboards`
 

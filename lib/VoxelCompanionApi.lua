@@ -220,6 +220,7 @@ local MESH_GEOMETRY_SCHEMAS = {
     fields = { primitive = "text", layer = "positive_integer", parallax = "finite",
       density = "unit", seed = "finite" },
     required = { layer = true, parallax = true, density = true, seed = true },
+    needsTexture = true,
   },
   rainbow = {
     fields = { primitive = "text", seed = "finite" },
@@ -779,6 +780,9 @@ local function validate_draw_mesh(command, state)
   if command.geometry == nil and direct_count == 0 then
     return nil, "mesh command needs geometry or one opaque mesh/resource"
   end
+  if direct_count > 0 and command.texture ~= nil then
+    return nil, "mesh command cannot combine an opaque mesh/resource with a texture"
+  end
   local ok, err
   if direct_count > 0 then
     ok, err = validate_opaque_resource(command.mesh or command.resource, "mesh command resource")
@@ -789,7 +793,8 @@ local function validate_draw_mesh(command, state)
       "mesh command.geometry", state)
     if not schema then return nil, err end
     if schema.needsTexture and command.texture == nil then
-      return nil, "mesh command.texture is required for panorama geometry"
+      return nil, "mesh command.texture is required for "
+        .. tostring(command.geometry.primitive) .. " geometry"
     end
   end
   ok, err = validate_opaque_resource(command.model, "mesh command.model")

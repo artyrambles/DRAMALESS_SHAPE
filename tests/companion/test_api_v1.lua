@@ -255,6 +255,31 @@ return function(T)
     T.falsy(ok)
     T.truthy(err:match("not in the API v1 baseline"))
 
+    command = plane()
+    command.geometry = nil
+    command.mesh = { id = "extension-owned-mesh" }
+    command.texture = { id = "extension-owned-texture" }
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("cannot combine an opaque mesh/resource with a texture"))
+
+    command.mesh = nil
+    command.resource = { id = "extension-owned-resource" }
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("cannot combine an opaque mesh/resource with a texture"))
+
+    command = plane()
+    command.phase = "background"
+    command.cacheKey = draw_key("background", 1)
+    command.geometry = {
+      primitive = "cloud_layer", layer = 1, parallax = 0.14,
+      density = 1, seed = 11,
+    }
+    ok, err = API.validate_draw_command(command)
+    T.falsy(ok)
+    T.truthy(err:match("texture is required"))
+
     ok, err = API.validate_draw_command({
       schemaVersion = 1,
       cacheKey = draw_key("translucent_after_actors", 1),
@@ -353,8 +378,8 @@ return function(T)
   T.test("builds the voxel_companion wire descriptor expected by clients", function()
     local API = load_api()
     local dispatcher = API.new({
-      host_id = "DRAMATIC_SHAPE",
-      host_version = "1.9.0",
+      host_id = "DRAMALESS_SHAPE",
+      host_version = "2.0.3",
       capabilities = {
         API.CAPABILITIES.WORLD_SNAPSHOT,
         API.CAPABILITIES.CAMERA_DELTA,
@@ -362,8 +387,8 @@ return function(T)
     })
     local provider = dispatcher:provider()
     T.equal(provider.api, 1)
-    T.equal(provider.host.id, "DRAMATIC_SHAPE")
-    T.equal(provider.host.version, "1.9.0")
+    T.equal(provider.host.id, "DRAMALESS_SHAPE")
+    T.equal(provider.host.version, "2.0.3")
     T.equal(provider.capabilities.world_snapshot, 1)
     T.equal(provider.capabilities.camera_delta, 1)
     T.truthy(type(provider.register) == "function")

@@ -20,18 +20,30 @@ return function(T)
   local function new_voxel3d()
     local voxel = {
       meshes = {}, draws = {}, glassStates = {}, depthStates = {},
+      lightingStates = {}, seamStates = {},
     }
     function voxel.newMesh(vertices, indices)
       local mesh = {
         vertices = vertices,
         indices = indices,
         releases = 0,
+        attachments = 0,
+        detachments = 0,
       }
       function mesh:release() self.releases = self.releases + 1 end
+      function mesh:setTexture(texture)
+        self.texture = texture
+        if texture == nil then
+          self.detachments = self.detachments + 1
+        else
+          self.attachments = self.attachments + 1
+        end
+      end
       voxel.meshes[#voxel.meshes + 1] = mesh
       return mesh
     end
     function voxel.draw(mesh, texture, model)
+      if texture and type(mesh.setTexture) == "function" then mesh:setTexture(texture) end
       voxel.draws[#voxel.draws + 1] = {
         mesh = mesh, texture = texture, model = model,
       }
@@ -41,6 +53,12 @@ return function(T)
     end
     function voxel.depth(value)
       voxel.depthStates[#voxel.depthStates + 1] = value
+    end
+    function voxel.lighting(value)
+      voxel.lightingStates[#voxel.lightingStates + 1] = value
+    end
+    function voxel.seams(value)
+      voxel.seamStates[#voxel.seamStates + 1] = value
     end
     return voxel
   end
@@ -53,7 +71,7 @@ return function(T)
     local Renderer = load_renderer(V)
     local renderer, err = Renderer.new({
       voxel3d = voxel,
-      mat4 = {},
+      mat4 = options.mat4 or {},
       graphics = graphics,
       max_cache_entries = options.max_cache_entries,
       max_cache_bytes = options.max_cache_bytes,
@@ -164,6 +182,252 @@ return function(T)
     T.equal(#voxel.draws, 2)
   end)
 
+  T.test("maps a panorama once around a fixed player-centred ring", function()
+    local translations = {}
+    local renderer, err, voxel, graphics = new_renderer({
+      mat4 = { translate = function(x, y, z)
+        local model = { x = x, y = y, z = z }
+        translations[#translations + 1] = model
+        return model
+      end },
+    })
+    T.truthy(renderer, err)
+    local ctx = context()
+    ctx.world.player = { x = 96, z = 144 }
+    local command = mesh_command("mesh.panorama.g1", {
+      primitive = "panorama", sourceWidth = 4096, targetWidth = 1024,
+      deepSkirt = true, distanceHaze = true,
+    }, { material = "horizon:valley", texture = { id = "panorama" } })
+
+    T.equal(renderer:mesh(command, ctx), true)
+    T.equal(#voxel.meshes, 1)
+    T.equal(#voxel.meshes[1].vertices, 64 * 8)
+    T.equal(#voxel.meshes[1].indices, 64 * 12)
+    T.equal(voxel.meshes[1].vertices[1][4], 1 / 64)
+    T.equal(voxel.meshes[1].vertices[2][4], 0)
+    T.equal(voxel.meshes[1].vertices[64 * 8 - 7][4], 1)
+    T.equal(voxel.meshes[1].vertices[64 * 8 - 6][4], 63 / 64)
+    T.equal(math.floor(voxel.meshes[1].vertices[2][1] + 0.5), 900)
+    T.equal(voxel.meshes[1].vertices[2][2], -1)
+    T.equal(voxel.meshes[1].vertices[3][2], 300)
+    T.deepEqual(translations[1], { x = 96, y = 0, z = 144 })
+    T.deepEqual(voxel.lightingStates, { false, true })
+    T.deepEqual(voxel.seamStates, { false, true })
+    T.deepEqual(graphics.colors[1], { 0.92, 0.94, 0.98, 1 })
+    T.equal(voxel.meshes[1].texture, nil)
+    T.equal(voxel.meshes[1].attachments, 1)
+    T.equal(voxel.meshes[1].detachments, 1)
+  end)
+
+  T.test("does not turn texture resolution into panorama world scale", function()
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    for index, target_width in ipairs({ 4096, 1024 }) do
+      T.equal(renderer:mesh(mesh_command("mesh.panorama.scale." .. index, {
+        primitive = "panorama", sourceWidth = 4096, targetWidth = target_width,
+      }, { material = "horizon:kanto", texture = { id = index } }), context()), true)
+    end
+    T.equal(voxel.meshes[1].vertices[2][1], voxel.meshes[2].vertices[2][1])
+    T.equal(voxel.meshes[1].vertices[3][2], voxel.meshes[2].vertices[3][2])
+  end)
+
+  T.test("rejects an untextured cloud layer without allocation", function()
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    local ok, draw_error = renderer:mesh(mesh_command("mesh.clouds.g1", {
+      primitive = "cloud_layer", layer = 1, parallax = 0.1,
+      density = 0.6, seed = 42,
+    }, { material = "sky:clouds:1" }), context())
+    T.falsy(ok)
+    T.truthy(draw_error:match("binary%-coverage texture"))
+    T.equal(#voxel.meshes, 0)
+    T.equal(#voxel.draws, 0)
+    T.equal(renderer:status().cacheEntries, 0)
+  end)
+
+  T.test("draws a high curved cloud deck from a borrowed texture", function()
+    local released, translations = 0, {}
+    local texture = { release = function() released = released + 1 end }
+    local renderer, err, voxel, graphics = new_renderer({
+      mat4 = { translate = function(x, y, z)
+        local model = { x = x, y = y, z = z }
+        translations[#translations + 1] = model
+        return model
+      end },
+    })
+    T.truthy(renderer, err)
+    local ctx = context()
+    ctx.world.player = { x = 80, z = 112 }
+    T.equal(renderer:mesh(mesh_command("mesh.clouds.textured.g1", {
+      primitive = "cloud_layer", layer = 1, parallax = 0.14,
+      density = 0.6, seed = 42,
+    }, { material = "sky:clouds:1", texture = texture }), ctx), true)
+    T.truthy(#voxel.meshes[1].vertices > 1000)
+    local minimum_y = math.huge
+    for _, vertex in ipairs(voxel.meshes[1].vertices) do
+      minimum_y = math.min(minimum_y, vertex[2])
+    end
+    T.truthy(math.abs(minimum_y - 248.4) < 0.000001)
+    T.equal(voxel.draws[1].texture, texture)
+    T.truthy(math.abs(translations[1].x - 68.8) <= 150)
+    T.truthy(math.abs(translations[1].z - 96.32) <= 150)
+    T.equal(translations[1].y, 0)
+    T.deepEqual(voxel.lightingStates, { false, true })
+    T.deepEqual(voxel.seamStates, { false, true })
+    T.truthy(math.abs(graphics.colors[1][1] - 0.846) < 0.000001)
+    T.truthy(math.abs(graphics.colors[1][2] - 0.904) < 0.000001)
+    T.equal(graphics.colors[1][3], 1)
+    T.equal(graphics.colors[1][4], 1)
+    T.equal(voxel.meshes[1].texture, nil)
+    T.equal(voxel.meshes[1].attachments, 1)
+    T.equal(voxel.meshes[1].detachments, 1)
+    T.truthy(renderer:dispose())
+    T.equal(released, 0)
+  end)
+
+  T.test("keeps continuous cloud topology across quality densities", function()
+    local function build(key, density, seed)
+      local renderer, err, voxel, graphics = new_renderer({
+        mat4 = { translate = function(x, y, z) return { x = x, y = y, z = z } end },
+      })
+      T.truthy(renderer, err)
+      local ctx = context()
+      ctx.world.player = { x = 80, z = 112 }
+      T.equal(renderer:mesh(mesh_command(key, {
+        primitive = "cloud_layer", layer = 2, parallax = 0.2,
+        density = density, seed = seed,
+      }, { material = "sky:clouds:2", texture = { id = key } }), ctx), true)
+      return voxel.meshes[1], voxel.draws[1].model, graphics.colors[1]
+    end
+
+    local high, high_model, high_color = build("mesh.clouds.high", 1, 17)
+    local balanced, balanced_model = build("mesh.clouds.balanced", 0.6, 17)
+    local low, low_model, low_color = build("mesh.clouds.low", 0.3, 17)
+    local repeat_low, repeat_model = build("mesh.clouds.low-repeat", 0.3, 17)
+    local other_seed, other_model = build("mesh.clouds.other-seed", 0.3, 99)
+    T.truthy(#high.vertices > 1000, "cloud deck must keep the full bounded topology")
+    T.equal(#high.vertices, #balanced.vertices)
+    T.equal(#high.vertices, #low.vertices)
+    T.deepEqual(high.indices, balanced.indices)
+    T.deepEqual(high.indices, low.indices)
+    for index = 1, #high.vertices do
+      T.equal(high.vertices[index][1], balanced.vertices[index][1])
+      T.equal(high.vertices[index][1], low.vertices[index][1])
+      T.equal(high.vertices[index][3], balanced.vertices[index][3])
+      T.equal(high.vertices[index][3], low.vertices[index][3])
+    end
+    local function minimum_y(mesh)
+      local result = math.huge
+      for index = 1, #mesh.vertices do
+        result = math.min(result, mesh.vertices[index][2])
+      end
+      return result
+    end
+    T.truthy(minimum_y(high) < minimum_y(balanced),
+      "Balanced must lift the opaque deck above High")
+    T.truthy(minimum_y(balanced) < minimum_y(low),
+      "Low must lift the opaque deck above Balanced")
+    T.deepEqual(low.vertices, repeat_low.vertices)
+    T.deepEqual(low_model, repeat_model)
+    T.falsy(other_model.x == low_model.x and other_model.z == low_model.z)
+    T.equal(high_model.y, 0)
+    T.equal(balanced_model.y, 0)
+    T.equal(other_seed.texture, nil)
+    T.equal(high_color[4], 1)
+    T.equal(low_color[4], 1)
+
+    local zero_renderer, zero_error, zero_voxel = new_renderer()
+    T.truthy(zero_renderer, zero_error)
+    T.equal(zero_renderer:mesh(mesh_command("mesh.clouds.zero", {
+      primitive = "cloud_layer", layer = 1, parallax = 0,
+      density = 0, seed = 1,
+    }, { material = "sky:clouds:1", texture = { id = "zero" } }), context()), true)
+    T.equal(#zero_voxel.meshes, 0)
+    T.equal(zero_renderer:status().cacheEntries, 0)
+  end)
+
+  T.test("background phase tests depth without writing and restores it", function()
+    local renderer, err, voxel, graphics = new_renderer()
+    T.truthy(renderer, err)
+    renderer:beginPhase("background")
+    T.deepEqual(graphics.depths[1], { "lequal", false })
+    renderer:endPhase()
+    T.deepEqual(voxel.depthStates, { "test" })
+  end)
+
+  T.test("restores panorama presentation state after a draw fault", function()
+    local voxel = new_voxel3d()
+    local released = 0
+    local texture = { release = function() released = released + 1 end }
+    function voxel.draw(mesh, borrowed)
+      mesh:setTexture(borrowed)
+      error("injected panorama draw fault")
+    end
+    local renderer, err, _, graphics = new_renderer({ voxel3d = voxel })
+    T.truthy(renderer, err)
+    local ok, draw_error = pcall(renderer.mesh, renderer, mesh_command(
+      "mesh.panorama.fault", {
+        primitive = "panorama", sourceWidth = 4096, targetWidth = 2048,
+      }, { material = "horizon:fault", texture = texture }
+    ), context())
+    T.falsy(ok)
+    T.truthy(tostring(draw_error):match("injected panorama draw fault"))
+    T.deepEqual(voxel.lightingStates, { false, true })
+    T.deepEqual(voxel.seamStates, { false, true })
+    T.equal(voxel.glassStates[#voxel.glassStates], true)
+    T.deepEqual(graphics.colors[#graphics.colors], { 1, 1, 1, 1 })
+    T.equal(voxel.meshes[1].texture, nil)
+    T.equal(voxel.meshes[1].attachments, 1)
+    T.equal(voxel.meshes[1].detachments, 1)
+    T.equal(released, 0)
+  end)
+
+  T.test("detaches a borrowed texture after a successful cached draw", function()
+    local released = 0
+    local texture = { release = function() released = released + 1 end }
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    T.equal(renderer:mesh(mesh_command("mesh.borrowed.detach", {
+      primitive = "plane", width = 4, depth = 4,
+    }, { material = "host:borrowed", texture = texture }), context()), true)
+    local mesh = voxel.meshes[1]
+    T.equal(mesh.texture, nil)
+    T.equal(mesh.attachments, 1)
+    T.equal(mesh.detachments, 1)
+    T.truthy(renderer:dispose())
+    T.equal(released, 0)
+  end)
+
+  T.test("evicts and releases a cached mesh when texture detachment fails", function()
+    local voxel = new_voxel3d()
+    local base_new_mesh = voxel.newMesh
+    function voxel.newMesh(vertices, indices)
+      local mesh = base_new_mesh(vertices, indices)
+      local base_set_texture = mesh.setTexture
+      function mesh:setTexture(texture)
+        if texture == nil then error("injected detach fault") end
+        return base_set_texture(self, texture)
+      end
+      return mesh
+    end
+    local released = 0
+    local texture = { release = function() released = released + 1 end }
+    local renderer, err = new_renderer({ voxel3d = voxel })
+    T.truthy(renderer, err)
+    local ok, draw_error = pcall(renderer.mesh, renderer, mesh_command(
+      "mesh.borrowed.detach-fault", { primitive = "plane", width = 4, depth = 4 },
+      { material = "host:borrowed", texture = texture }
+    ), context())
+    T.falsy(ok)
+    T.truthy(tostring(draw_error):match("could not detach borrowed texture"))
+    T.equal(renderer:status().cacheEntries, 0)
+    T.equal(renderer:status().cacheBytes, 0)
+    T.equal(voxel.meshes[1].releases, 1)
+    T.equal(released, 0)
+    T.truthy(renderer:dispose())
+    T.equal(voxel.meshes[1].releases, 1)
+  end)
+
   T.test("cuts away nearby KFP ceiling and wall boxes from the public player cell", function()
     for _, role in ipairs({ "ceiling", "wall" }) do
       local renderer, err, voxel = new_renderer()
@@ -213,6 +477,50 @@ return function(T)
     T.equal(#voxel.meshes[1].vertices, 48)
     T.equal(#voxel.meshes[2].vertices, 48)
     T.equal(#voxel.draws, 2)
+  end)
+
+  T.test("keeps the far wall shell while melting the player row southward", function()
+    local renderer, err, voxel = new_renderer()
+    T.truthy(renderer, err)
+    local ctx = context()
+    ctx.world.player = { cellX = 10, cellZ = 10 }
+    T.equal(renderer:instances(instances_command(
+      "instances.cutaway.wall-cross-section",
+      { primitive = "box", role = "wall", cutaway = true },
+      {
+        { x = 2, y = 2, z = 2, cellX = 2, cellZ = 2 },
+        { x = 10, y = 2, z = 9, cellX = 10, cellZ = 9 },
+        { x = 20, y = 2, z = 20, cellX = 20, cellZ = 20 },
+      }
+    ), ctx), true)
+    T.equal(#voxel.meshes[1].vertices, 48)
+  end)
+
+  T.test("opens first-person canopy near the player without changing other modes", function()
+    local command = instances_command(
+      "instances.cutaway.canopy",
+      { primitive = "canopy", width = 16, cutaway = true },
+      {
+        { x = 10, y = 24, z = 10, cellX = 10, cellZ = 10 },
+        { x = 20, y = 24, z = 20, cellX = 20, cellZ = 20 },
+      }
+    )
+
+    local first_renderer, first_error, first_voxel = new_renderer()
+    T.truthy(first_renderer, first_error)
+    local first_context = context()
+    first_context.world.mode = "first_person"
+    first_context.world.player = { cellX = 10, cellZ = 10 }
+    T.equal(first_renderer:instances(command, first_context), true)
+    T.equal(#first_voxel.meshes[1].vertices, 24)
+
+    local third_renderer, third_error, third_voxel = new_renderer()
+    T.truthy(third_renderer, third_error)
+    local third_context = context()
+    third_context.world.mode = "third_person"
+    third_context.world.player = { cellX = 10, cellZ = 10 }
+    T.equal(third_renderer:instances(command, third_context), true)
+    T.equal(#third_voxel.meshes[1].vertices, 48)
   end)
 
   T.test("fails open when cutaway coordinates are incomplete", function()
@@ -274,7 +582,7 @@ return function(T)
     T.truthy(renderer, err)
     local command = instances_command(
       "instances.cutaway.variant-lru",
-      { primitive = "box", role = "wall", cutaway = true },
+      { primitive = "box", role = "ceiling", cutaway = true },
       {
         { x = 1, y = 2, z = 1, cellX = 1, cellZ = 1 },
         { x = 20, y = 2, z = 20, cellX = 20, cellZ = 20 },
@@ -367,6 +675,30 @@ return function(T)
     T.equal(voxel.draws[1].mesh, resource)
     T.truthy(renderer:dispose())
     T.equal(resource.releases, 0)
+  end)
+
+  T.test("rejects a borrowed texture on a direct opaque mesh or resource", function()
+    for _, field in ipairs({ "mesh", "resource" }) do
+      local renderer, err, voxel = new_renderer()
+      T.truthy(renderer, err)
+      local mutations, resource_releases, texture_releases = 0, 0, 0
+      local resource = {
+        setTexture = function() mutations = mutations + 1 end,
+        release = function() resource_releases = resource_releases + 1 end,
+      }
+      local texture = { release = function() texture_releases = texture_releases + 1 end }
+      local fields = { material = "host:borrowed", texture = texture }
+      fields[field] = resource
+      local result, draw_error = renderer:mesh(base_command(
+        "mesh", "mesh.direct-texture." .. field, fields
+      ), context())
+      T.falsy(result)
+      T.truthy(tostring(draw_error):match("cannot use a borrowed texture"))
+      T.equal(#voxel.draws, 0)
+      T.equal(mutations, 0)
+      T.equal(resource_releases, 0)
+      T.equal(texture_releases, 0)
+    end
   end)
 
   T.test("rejects cache-key content and context collisions without replacement", function()

@@ -1,0 +1,4 @@
+lib/VoxelCompanionApi.lua text eol=lf
+docs/voxel-companion-api-v1.md text eol=lf
+tests/companion/test_api_v1.lua text eol=lf
+tests/fixtures/voxel_companion_draw_v1.lua text eol=lf
