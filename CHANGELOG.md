@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.2 and 2.0.3
+- Fixed math error in render distance calculation (thanks to stavrozo for the contrib!)
+- Contrib from Dorian Burton: overworld sprites bigger than 16x16 (for example added by mods) should now render correctly.
+- Added a MapGrids.lua file to the lib folder. It's a draft and holds info for elevations at certain map coordinates.
+  eventually this should hopefully aid in rendering the map as a not totally flat plane, but for that I first need
+  to gather info about what the actual height of the terrain is. Feel free to contribute.
+
 ## 2.0.0 - Big Fat Cleanup Time
 
 **AKA: The King Is Dead, Long Live The King.**
