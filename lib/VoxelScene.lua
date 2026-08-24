@@ -19,6 +19,7 @@ local Shadows = V.require("Shadows")
 local ChunkMesher = V.require("ChunkMesher")
 local SpriteBillboards = V.require("SpriteBillboards")
 local TileShape = V.require("TileShape")
+local MapElevation = V.require("MapElevation")
 local TerrainAtlas = V.require("TerrainAtlas")
 local Voxel = V.require("VoxelState")
 local Sky = V.require("Sky")
@@ -243,16 +244,29 @@ local function groundAt(map, cellX, cellY)
   -- this, crossing into such a map hoisted the walker tree-high for
   -- exactly one step -- the "hops like a ledge" seam bug.
   if not map:inBounds(cellX, cellY) then return 0 end
+  local base = MapElevation.worldHeight(map, cellX, cellY)
   local shapes = TileShape.forMap(map)
   local s = shapes[map:cellTile(cellX, cellY)]
-  if not s then return 0 end
+  if not s then return base end
   -- a recessed class (water) still supports whatever stands on it; only
   -- raised ground lifts the model.  Stairs never do: the class height is
   -- the flight's TALL end, but the player enters at floor level and the
   -- warp fires as they step in -- lifting them onto the geometry read as
   -- climbing an invisible block
   if s.art == "stair" then return 0 end
-  return s.h > 0 and s.h or 0
+  -- a mapped ledge's curb bump is now carried by the surrounding slope
+  -- itself (MapGrids steps the whole region, half a unit either side of
+  -- the hop tile); keeping the old +6px on top would double the step.
+  -- Checked per CELL, not per map: a map like Route 1 only has draft
+  -- data for part of its length, and MapElevation.hasData(map.id) being
+  -- true for the whole map used to suppress the plain curb even outside
+  -- the mapped rows, where base is always 0 and there is no slope to
+  -- carry it -- leaving those ledges with no visual step at all.
+  -- The ledge tile itself stands one tile above the slope value it sits
+  -- on (see ChunkMesher.heightAt) -- match that here so standing on a
+  -- ledge tile doesn't sink the model into the mesh.
+  if s.class == "ledge" and base ~= 0 then return base + MapElevation.LEDGE_LIP end
+  return base + (s.h > 0 and s.h or 0)
 end
 
 VoxelScene.YAW = YAW

@@ -54,6 +54,7 @@ local Assets = require("src.render.Assets")
 local Structures = V.require("Structures")
 local TileShape = V.require("TileShape")
 local Voxel3D = V.require("Voxel3D")
+local MapElevation = V.require("MapElevation")
 local Budget = V.require("BuildBudget")
 local MeshDisk = V.require("VoxelMeshDisk")
 
@@ -125,6 +126,12 @@ local SIDES = {
 
 local function keyOf(tx, ty)
   return (ty + 64) * 4096 + (tx + 64)
+end
+
+-- MapElevation indexes the 16px movement cell; wx/wz here are world pixels
+-- (8 per tile, 16 per cell), so this floors straight down to the cell.
+local function elevAtWorld(map, wx, wz)
+  return MapElevation.worldHeight(map, math.floor(wx / 16), math.floor(wz / 16))
 end
 
 -- ------------------------------------------------------------ vertex sinks
@@ -292,13 +299,34 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
   local atlasW = tileset.imageWidth or (perRow * 8)
   local atlasH = tileset.imageHeight or 48
 
+  -- MapGrids/MapElevation index the 16px MOVEMENT cell (the same grid the
+  -- walker and its ledges use); tx/ty here are 8px TILE coordinates -- two
+  -- tiles per cell -- so every lookup floors down to the cell it belongs to.
+  local function elevAt(tx, ty)
+    return elevAtWorld(map, tx * 8, ty * 8)
+  end
+
   local function heightAt(tx, ty)
     local k = keyOf(tx, ty)
-    if S.skip[k] then return 0 end
+    if S.skip[k] then return elevAt(tx, ty) end
     local run = S.runs[k]
-    if run then return run.h end
+    -- multi-cell structures (buildings, walls, hedge rows) rise with
+    -- whatever ground their own footprint sits on -- a gym built on a
+    -- small plaza/hill should visibly sit on it, not float above a
+    -- flattened lot underneath a building that never moved.
+    if run then return elevAt(tx, ty) + run.h end
     local s = S.shapeAt[k]
-    return s and s.h or 0
+    local base = elevAt(tx, ty)
+    -- a mapped ledge's curb is now the surrounding slope itself (see
+    -- VoxelScene.groundAt); stacking the old +6px on top would double it.
+    -- Checked per cell (base ~= 0), not per map -- see VoxelScene.groundAt.
+    -- The ledge tile itself still stands one tile above that slope value
+    -- (MapElevation.LEDGE_LIP) -- a lip proud of its terrace, not flush
+    -- with the midpoint slope like ordinary ground.
+    if s and s.class == "ledge" and base ~= 0 then
+      return base + MapElevation.LEDGE_LIP
+    end
+    return base + (s and s.h or 0)
   end
 
   -- one atlas-rect UV, optionally cropped to art rows [vTop, vBot] of 8
@@ -506,27 +534,32 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
 
       if s and S.skip[k] then
         -- an object stands here; paint its synthesized ground and let the
-        -- prebuilt prism quads (appended below) carry the art
+        -- prebuilt prism quads (appended below) carry the art. Every
+        -- object's own geometry now follows the same elevation too
+        -- (flowerQuads/grassQuads, S.objectQuads, S.roundStamps), so the
+        -- ground under it can safely follow along rather than leaving a
+        -- flat patch under whatever's actually standing on raised ground.
+        local base = elevAt(tx, ty)
         local g = S.ground[k]
         if g then
-          topQuad(tx * 8, ty * 8, 0, g, 1)
-          -- the claimed tile is still ground at height 0, and water next
-          -- door still recesses below it: without the same below-ground
-          -- side bands ordinary ground emits, the two-pixel shoreline
-          -- face is a slit into the sky behind the mesh -- which is
-          -- exactly what a building plot or a sign standing at the
+          topQuad(tx * 8, ty * 8, base, g, 1)
+          -- the claimed tile is still ground at the region's height, and
+          -- water next door still recesses below it: without the same
+          -- below-ground side bands ordinary ground emits, the two-pixel
+          -- shoreline face is a slit into the sky behind the mesh -- which
+          -- is exactly what a building plot or a sign standing at the
           -- waterline showed. Same bands, cut from the synthesized
           -- ground's own art
           for _, side in ipairs(SIDES) do
             local nh = heightAt(tx + side[1], ty + side[2])
-            if nh < 0 then
+            if nh < base then
               local d = side[3]
               local lat = LATERAL[d]
-              local hl = lat and heightAt(tx + lat[1], ty + lat[2]) or 0
-              local hr = lat and heightAt(tx + lat[3], ty + lat[4]) or 0
-              for band = math.floor(nh / 8), -1 do
+              local hl = lat and heightAt(tx + lat[1], ty + lat[2]) or base
+              local hr = lat and heightAt(tx + lat[3], ty + lat[4]) or base
+              for band = math.floor(nh / 8), math.floor(base / 8) - 1 do
                 local y0 = math.max(nh, band * 8)
-                local y1 = math.min(0, band * 8 + 8)
+                local y1 = math.min(base, band * 8 + 8)
                 if y1 > y0 then
                   sideQuad(d, tx * 8, ty * 8, y0, y1, g,
                            (band * 8 + 8) - y1, (band * 8 + 8) - y0,
@@ -539,7 +572,17 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
         end
       elseif s then
         local run = S.runs[k]
-        local h = run and run.h or s.h
+        -- see heightAt: a run (building/wall/hedge row) rises with its
+        -- own footprint's ground, same as everything else
+        local base = elevAt(tx, ty)
+        local h
+        if run then
+          h = base + run.h
+        elseif s.class == "ledge" and base ~= 0 then
+          h = base + MapElevation.LEDGE_LIP
+        else
+          h = base + s.h
+        end
         local x0, z0 = tx * 8, ty * 8
 
         -- top face. A roofed volume gets a GABLE segment: the roof rises
@@ -557,7 +600,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
           local mid = run.extent / 2
           local function gableH(d)     -- d = rows north of the south eave
             local t = d <= mid and d / mid or (run.extent - d) / (run.extent - mid)
-            return run.h + run.rise * math.max(0, math.min(1, t))
+            return base + run.h + run.rise * math.max(0, math.min(1, t))
           end
           local d0 = run.front - ty                -- rows from the south edge
           local hS = gableH(d0)
@@ -568,13 +611,13 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
                                math.floor((1 - rel) * run.roofRows))
           local roofTile = map:tileAt(tx, run.north + idx)
           local swY, seY, neY, nwY = hS, hS, hN, hN
-          if heightAt(tx - 1, ty) < run.h then     -- west flank: hip
-            swY = math.max(run.h, hS - 8)
-            nwY = math.max(run.h, hN - 8)
+          if heightAt(tx - 1, ty) < base + run.h then     -- west flank: hip
+            swY = math.max(base + run.h, hS - 8)
+            nwY = math.max(base + run.h, hN - 8)
           end
-          if heightAt(tx + 1, ty) < run.h then     -- east flank: hip
-            seY = math.max(run.h, hS - 8)
-            neY = math.max(run.h, hN - 8)
+          if heightAt(tx + 1, ty) < base + run.h then     -- east flank: hip
+            seY = math.max(base + run.h, hS - 8)
+            neY = math.max(base + run.h, hN - 8)
           end
           local u0, u1, v0, v1 = uvRect(roofTile, 0, 8)
           push({ { x0, swY, z0 + 8 }, { x0 + 8, seY, z0 + 8 },
@@ -650,6 +693,17 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
               local y1 = math.min(h, band * 8 + 8)
               if y1 > y0 then
                 local src, shade = tile, Voxel3D.FACE_SHADE[d]
+                -- a MapGrids-driven cliff on plain ground/ledge has no
+                -- purpose-built curb art to fold up like a wall does -- it
+                -- just repeats the flat top tile, which reads fine for the
+                -- old few-pixel shoreline dip this face type was built for
+                -- but stands out as a lit, same-colored wall next to
+                -- anything (a hedge) once a real elevation step uses it.
+                -- Darkening it further reads as a shadowed bank instead.
+                if not run and s.art ~= "upright" and base ~= 0
+                   and (s.class == "ground" or s.class == "ledge") then
+                  shade = shade * 0.6
+                end
                 if run then
                   -- fold the structure's artwork up this face: band k
                   -- samples the map row k tiles north of the structure's
@@ -755,6 +809,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
     return scUV
   end
 
+  local ocScratch = { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } }
   for _, q in ipairs(S.objectQuads) do
     Budget.tick()
     local x0 = math.min(q[1][1], q[2][1], q[3][1], q[4][1])
@@ -768,7 +823,29 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
     -- the neighbour will ever draw that geometry
     if q.own or outwardOnEdge(q, x0, z0, x1, z1)
        or keepQuad(x0, z0, x1, z1) then
-      push({ q[1], q[2], q[3], q[4] }, quadUV(q), groundShades(q, q.shade))
+      -- Structures builds this prism once at a fixed absolute Y with no
+      -- idea of MapGrids; lift it by whatever its own footprint's cell
+      -- is elevated by so a sign/prop stands on the ground it's actually
+      -- resting on instead of the ground that cell had before any of
+      -- this existed.
+      -- groundShades reads corner Y as a small LOCAL height above the
+      -- object's own base (its ground-contact falloff, meant for a
+      -- prop's first few pixels) -- shade from the object's own
+      -- unshifted geometry first, THEN offset the vertex positions for
+      -- the world elevation. Folding the elevation into Y before this
+      -- fed a hillside's -30px into a formula built for 0-6px, which
+      -- produced a wildly negative multiplier and rendered pure black.
+      local shade = groundShades(q, q.shade)
+      local dy = elevAtWorld(map, (x0 + x1) / 2, (z0 + z1) / 2)
+      local quad = q
+      if dy ~= 0 then
+        for i = 1, 4 do
+          local c, s2 = q[i], ocScratch[i]
+          s2[1], s2[2], s2[3] = c[1], c[2] + dy, c[3]
+        end
+        quad = ocScratch
+      end
+      push(quad, quadUV(q), shade)
     end
   end
 
@@ -794,6 +871,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
   local sc = { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } }
   for _, st in ipairs(S.roundStamps or {}) do
     local mx, mz = st.mx, st.mz
+    local stampDy = elevAtWorld(map, mx, mz)
     local sr = st.r or 8
     local sx0, sz0, sx1, sz1 = mx - sr, mz - sr, mx + sr, mz + sr
     local interior = sx0 > 0 and sx1 < bw and sz0 > 0 and sz1 < bh
@@ -812,7 +890,7 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
         for i = 1, 4 do
           local c, s2 = q[i], sc[i]
           s2[1] = c[1] + mx
-          s2[2] = c[2]
+          s2[2] = c[2] + stampDy
           s2[3] = c[3] + mz
         end
         local ok = keepAll
@@ -824,7 +902,12 @@ local function runGeometry(map, bodyOnly, masks, sink, waterSink)
           ok = keepQuad(x0, z0, x1, z1)
         end
         if ok then
-          push(sc, quadUV(q), groundShades(sc, q.shade))
+          -- shade from the stamp's own unshifted local Y (q), not sc
+          -- (which folds in stampDy) -- same reasoning as objectQuads
+          -- above: groundShades' ground-contact falloff assumes a small
+          -- local height, and a hillside's elevation offset blown
+          -- through it renders solid black instead of shaded.
+          push(sc, quadUV(q), groundShades(q, q.shade))
         end
       end
     end
@@ -938,12 +1021,37 @@ local function meshesFromRawAux(aux)
   return meshFromRaw(aux.grass), meshFromRaw(aux.flowers), figures
 end
 
+-- Structures bakes grass/flower quads once, at whatever height the ground
+-- had when it never varied (always 0). MapElevation didn't exist yet at
+-- that layer, so a tuft or flower sitting on a MapGrids-raised cell would
+-- stay at the old flat height while the ground moved out from under it --
+-- lift each quad by its own cell's elevation before meshing.
+local function elevatedQuads(map, quads)
+  if not quads or #quads == 0 then return quads end
+  local out = {}
+  for i, q in ipairs(quads) do
+    local dy = elevAtWorld(map, q[1][1], q[1][3])
+    if dy == 0 then
+      out[i] = q
+    else
+      out[i] = {
+        { q[1][1], q[1][2] + dy, q[1][3] },
+        { q[2][1], q[2][2] + dy, q[2][3] },
+        { q[3][1], q[3][2] + dy, q[3][3] },
+        { q[4][1], q[4][2] + dy, q[4][3] },
+        uv = q.uv, shade = q.shade,
+      }
+    end
+  end
+  return out
+end
+
 -- The tall-grass rows as their own mesh: VoxelScene draws it AFTER the
 -- characters so the southern row of a grass cell still overdraws a
 -- walker's feet (characters stamp over terrain, Gen 1 style, so ordinary
 -- terrain could never do this).
 local function buildGrassMesh(map)
-  return quadsMesh(Structures.forMap(map).grassQuads)
+  return quadsMesh(elevatedQuads(map, Structures.forMap(map).grassQuads))
 end
 
 -- The flower billboards as their own mesh, for the same reason as the
@@ -955,7 +1063,7 @@ end
 -- sun pass draws it): a handful of flowers per meadow, not thousands of
 -- tufts.
 local function buildFlowerMesh(map)
-  return quadsMesh(Structures.forMap(map).flowerQuads)
+  return quadsMesh(elevatedQuads(map, Structures.forMap(map).flowerQuads))
 end
 
 -- Authored FIGURES (a person drawn into furniture) as one mesh each, in

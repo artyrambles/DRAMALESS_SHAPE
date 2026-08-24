@@ -47,7 +47,8 @@ local TileShape = {}
 -- or omits a class. Same numbers the shipped file carries; a cell is 16x16.
 local FALLBACK_HEIGHTS = {
   ground = 0,
-  water = -2,
+  -- kept in sync with data/voxel_heights.lua's `water` -- see there
+  water = -8,
   void = 0,
   ledge = 6,
   fence = 10,

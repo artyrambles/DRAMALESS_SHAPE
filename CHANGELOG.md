@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+- Filled in the elevation draft from 2.0.2/2.0.3 (issue #41): `MapGrids.lua` now carries
+  auto-derived per-cell elevation for every outdoor map, generated from the same ledge
+  tile-pair data the walker itself uses (`data/generated/field.lua`), not hand-authored --
+  Route 1 and Pallet Town's old draft entries were regenerated the same way for full,
+  uniform coverage. Ledges, hills and terraces render as real steps; buildings and walls
+  rise with their own footprint's ground instead of forcing a flat pad under a door; grass
+  tufts, flowers, signs and other scenery follow the slope they actually sit on. A ledge
+  tile itself now stands one tile above the slope it's the edge of, so it reads as a lip
+  rather than blending into the terrace. Water also now recesses a full tile below its
+  banks instead of the old couple-pixel dip, which read as flush with the shoreline.
+
 ## 2.0.2 and 2.0.3
 - Fixed math error in render distance calculation (thanks to stavrozo for the contrib!)
 - Contrib from Dorian Burton: overworld sprites bigger than 16x16 (for example added by mods) should now render correctly.
