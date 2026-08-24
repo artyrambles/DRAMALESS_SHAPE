@@ -57,6 +57,7 @@ local Voxel3D = V.require("Voxel3D")
 local VoxelScene = V.require("VoxelScene")
 local TiltShift = V.require("TiltShift")
 local ChunkMesher = V.require("ChunkMesher")
+local MapElevation = V.require("MapElevation")
 local VoxelPrecache = V.require("VoxelPrecache")
 local VoxelLoadingVeil = V.require("VoxelLoadingVeil")
 local VoxelGrid = V.require("VoxelGrid")
@@ -92,6 +93,24 @@ function voidFill.check()
   voidFill.last = now
 end
 
+-- The ELEVATION setting is baked straight into chunk mesh vertex
+-- positions at build time (see ChunkMesher.elevAt), not read fresh per
+-- frame like most settings, so flipping it needs the same full-rebuild
+-- reaction void-fill above already gets for the same reason. Polled here
+-- rather than off "mod.options_changed" -- that event fires reliably from
+-- the mod manager's own settings page, but the quick in-game OPTIONS row
+-- writes the value through ModSetting:setIndex directly and was observed
+-- not to raise it at all.
+local elevationCheck = { last = nil }
+function elevationCheck.check()
+  local now = MapElevation.enabled()
+  if elevationCheck.last ~= nil and now ~= elevationCheck.last then
+    ChunkMesher.invalidate()
+    V.log:event("mesh", "elevation-invalidated", {})
+  end
+  elevationCheck.last = now
+end
+
 mod.content.render_pipelines:register("voxel", {
   label = "VOXEL",
   levels = Voxel.ANGLE_LABELS,
@@ -104,6 +123,7 @@ mod.content.render_pipelines:register("voxel", {
     FirstPerson.update(dt)
     DayNight.update(dt)
     voidFill.check()
+    elevationCheck.check()
     if not Voxel.active() then return end
     local Game = require("src.core.Game")
     local ow = Game and Game.overworld
@@ -221,7 +241,10 @@ local SETTINGS = {
     when = cardBattlesEnabled, full = true },
   { VoxelScene.silhouetteSetting,
   "Draw silhouettes for characters hidden behind voxel geometry. "
-  .. "OFF disables the silhouette pass completely." }, 
+  .. "OFF disables the silhouette pass completely." },
+  { MapElevation.setting,
+  "Render ledges, hills and terraces with real elevation instead of a "
+  .. "flat plane. OFF returns every map to the flat ground it always had." },
     -- 1ST's own look input, not a diorama knob -- offered whether or not FULL
     -- is on, and only while there's a first-person rung to look with.
   { FirstPerson.invertLookY,

@@ -11,6 +11,7 @@
 local V = ...
 
 local MapGrids = V.require("MapGrids") or {}
+local ModSetting = V.require("ModSetting")
 
 -- World pixels per 1.0 of MapGrids elevation. Sized so a single mapped
 -- ledge (a 0.5 step either side of the hop tile) matches the curb height
@@ -47,9 +48,26 @@ local LEDGE_LIP = 8
 
 local MapElevation = { UNIT = UNIT, LEDGE_LIP = LEDGE_LIP }
 
+-- Whether the derived terrain elevation applies at all. This is the ONE
+-- place every consumer (ChunkMesher, VoxelScene) reads elevation through,
+-- so gating it here is enough on its own -- OFF folds worldHeight back to
+-- 0 everywhere, which puts ledges back on their original flat curb
+-- (TileShape's `ledge` class height), buildings back at their doorway's
+-- floor level, and grass/flowers/signs back at the height they were
+-- authored at, all without any of those call sites needing their own
+-- OFF path or MapGrids.lua itself changing at all.
+MapElevation.setting = ModSetting.new(
+  "elevation", "ELEVATION", { true, false }, { "ON", "OFF" })
+
+function MapElevation.enabled()
+  return MapElevation.setting:get() and true or false
+end
+
 -- The extra ground height (world pixels, +up) MapGrids assigns cell
--- (cx, cy) on `map`, or 0 where the map has no draft data yet.
+-- (cx, cy) on `map`, or 0 where the map has no draft data yet, or the
+-- setting above is OFF.
 function MapElevation.worldHeight(map, cx, cy)
+  if not MapElevation.enabled() then return 0 end
   local t = tableFor(map.id)
   if not t then return 0 end
   return t[cy * 4096 + cx] or 0
