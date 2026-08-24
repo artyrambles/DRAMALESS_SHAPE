@@ -58,6 +58,7 @@ local VoxelScene = V.require("VoxelScene")
 local TiltShift = V.require("TiltShift")
 local ChunkMesher = V.require("ChunkMesher")
 local MapElevation = V.require("MapElevation")
+local TileShape = V.require("TileShape")
 local VoxelPrecache = V.require("VoxelPrecache")
 local VoxelLoadingVeil = V.require("VoxelLoadingVeil")
 local VoxelGrid = V.require("VoxelGrid")
@@ -105,6 +106,11 @@ local elevationCheck = { last = nil }
 function elevationCheck.check()
   local now = MapElevation.enabled()
   if elevationCheck.last ~= nil and now ~= elevationCheck.last then
+    -- water's depth (TileShape.heights()'s `water` entry, see its
+    -- WATER_H_FLAT) also depends on this setting, and TileShape caches
+    -- resolved shapes per tileset -- that cache needs dropping too, or
+    -- water keeps whatever depth it resolved to before the flip.
+    TileShape.invalidate()
     ChunkMesher.invalidate()
     V.log:event("mesh", "elevation-invalidated", {})
   end
