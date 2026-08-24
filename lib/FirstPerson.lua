@@ -513,11 +513,17 @@ function FirstPerson.update(dt)
   -- part of the dive in from the orbit, which carries the eye anyway
   ThirdPerson.update(dt, FirstPerson.blend)
 
-  -- mouse capture follows engagement: captured whenever the rung is on and
-  -- the window has focus, released the moment either ends. Checked against
-  -- the live mode rather than toggled on edges, so a capture lost to the
-  -- OS (alt-tab) re-arms itself on the next focused frame.
-  local wantCapture = engagedNow
+  local driving = FirstPerson.driving()
+
+  -- mouse capture follows DRIVING, not engagement: the pointer is taken
+  -- only while the rung is on, the overworld is on top, and the window has
+  -- focus. It is given back the moment any of the three ends -- so a menu,
+  -- a dialog or a battle over the world frees the cursor, and the player
+  -- can reach the rest of the desktop without leaving the rung. Checked
+  -- against the live mode rather than toggled on edges, so a capture lost
+  -- to the OS (alt-tab) re-arms itself on the next focused frame, and so
+  -- does one dropped for a menu when that menu closes.
+  local wantCapture = driving
   if wantCapture and love.window and love.window.hasFocus then
     local okF, focus = pcall(love.window.hasFocus)
     wantCapture = okF and focus or false
@@ -529,8 +535,6 @@ function FirstPerson.update(dt)
     end
     captured = wantCapture
   end
-
-  local driving = FirstPerson.driving()
 
   -- The mouse's counts, accumulated by the wrapped handler since the last
   -- tick; dropped unread while something else owns the screen.
