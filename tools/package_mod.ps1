@@ -7,7 +7,7 @@ if (-not $Output) {
 }
 $Output = [IO.Path]::GetFullPath($Output)
 $files = @()
-foreach ($dir in @("assets", "data", "lib")) {
+foreach ($dir in @("assets", "data", "docs", "lib")) {
   $path = Join-Path $repo $dir
   if (Test-Path -LiteralPath $path) {
     $files += Get-ChildItem -LiteralPath $path -Recurse -File | ForEach-Object {

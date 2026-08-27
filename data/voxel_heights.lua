@@ -198,6 +198,18 @@ return {
       -- one voxel ball per 16x16 cell from the canopy's darkest-pixel
       -- outline, round in depth, so tree rows become rows of real canopies
       cylinder = { 42, 43, 58, 59, 64, 65, 80, 81 },
+      -- Companion-only semantic facts.  `cylinder` is a render shape, not
+      -- an object identity: this one pool contains both the grey boulders
+      -- and the green border-tree cells.  Keep the exact distinction next
+      -- to the authored tile profile so snapshot consumers never have to
+      -- guess from colour, palette, or the generic cylinder class.
+      companion = {
+        tree_support = { 64, 65, 80, 81 },
+        boulder_tree = { 42, 43, 58, 59 },
+        -- The legacy peak system used these exact authored rock cells as
+        -- seeds for a bounded, collision-checked mountain cluster.
+        mountain_seed = { 2, 36 },
+      },
       -- the town sign (blockset 8's SE cell): a standing per-pixel slab
       -- 2 voxels thin, transparency respected -- never a solid box
       signpost = { 70, 71, 86, 87 },
@@ -345,6 +357,9 @@ return {
       -- the pin is not copied there.
       cylinder = { 44, 45, 46, 47,
                    7, 8, 23, 24 },
+      companion = {
+        boulder_tree = { 44, 45, 46, 47, 7, 8, 23, 24 },
+      },
       -- Vermilion Gym's trash cans ($0B/$0C over $1B/$1C), the switch
       -- puzzle's fifteen cans plus the sixteenth beside the leader's
       -- platform.  An open galvanised bin in the 3/4 view, and its plan is

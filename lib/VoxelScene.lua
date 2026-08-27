@@ -33,6 +33,14 @@ local ModSetting = V.require("ModSetting")
 
 local VoxelScene = {}
 
+-- Optional Voxel Companion API v1 adapter. The main mod installs one adapter
+-- after all scene dependencies load. Keeping the reference here avoids a
+-- reverse require and keeps the scene fully usable when the adapter refuses.
+local companion
+function VoxelScene.setCompanion(value)
+  companion = value
+end
+
 -- Whether the hidden-character silhouette pass is drawn.
 -- Keep this ON by default so the all-NPC silhouette behavior remains the
 -- default introduced by the PR; users can disable the pass from OPTIONS.
@@ -1077,6 +1085,21 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
   local fpRig, fpCx, fpCy = FirstPerson.frame(me, cx, cy, vw, vh)
   if fpRig then cx, cy = fpCx, fpCy end
 
+  local companionFrame = false
+  if companion then
+    local ok, active = pcall(companion.beginWorldFrame, companion, {
+      state = state,
+      width = w,
+      height = h,
+      vw = vw,
+      vh = vh,
+      cx = cx,
+      cy = cy,
+      atlasFor = atlasFor,
+    })
+    companionFrame = ok and active and true or false
+  end
+
   -- The sun's box, pushed along the first-person look so it covers the
   -- ground THIS camera sees (a no-op at blend zero): the orbit's fit
   -- reaches far north and barely south, which is right for every rung
@@ -1086,6 +1109,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
               water, nbWater)
 
   if not Voxel3D.beginScene(w, h, cx, cy, vw, vh, skyFor(state.map)) then
+    if companionFrame then pcall(companion.endWorldFrame, companion, "scene-unavailable") end
     return nil
   end
 
@@ -1097,7 +1121,9 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
   --                Mat4.translate(nb.ox, 0, nb.oy))
   --   end
   -- end
-
+  if companionFrame then
+    pcall(companion.dispatchRenderPhase, companion, "background")
+  end
   Voxel3D.draw3DTerrain(terrain, atlasFor(state.map), state.neighbors, nbMesh, withinRenderDistance)
 
   -- Without a shadow map (headless, or a driver that could not make the
@@ -1155,6 +1181,10 @@ end
         drawCast(state, posed, atlasFor)
       end)
     end
+
+  if companionFrame then
+    pcall(companion.dispatchRenderPhase, companion, "opaque_after_terrain")
+  end
 
 
   -- Sprite sheets from here to the figure pass: their texture coordinates
@@ -1252,7 +1282,14 @@ end
     end
   end
 
-  return Voxel3D.endScene()
+
+  if companionFrame then
+    pcall(companion.dispatchRenderPhase, companion, "translucent_after_actors")
+  end
+
+  local canvas = Voxel3D.endScene()
+  if companionFrame then pcall(companion.endWorldFrame, companion, "frame-complete") end
+  return canvas
 end
 
 return VoxelScene

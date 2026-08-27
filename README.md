@@ -37,6 +37,24 @@ Install the release ZIP through Gen1Recomp's mod manager or extract it as
 `mods/DRAMALESS_SHAPE`. This experimental build targets mod API 2 and declares
 its required engine range in `manifest.json`.
 
+## Voxel Companion API v1
+
+This branch exports the read-only `voxel_companion` v1 provider for Kanto First
+Person. The adapter runs inside the existing official `voxel` render pipeline.
+DRAMALESS_SHAPE keeps ownership of `drawWorld`, terrain, actors, the base
+camera, and the final scene canvas.
+
+Certified extension seams are `background`, `opaque_after_terrain`, and
+`translucent_after_actors`. This host does not advertise terrain patches,
+shadow-pass extensions, or battle-pass extensions. It rejects descriptors that
+request those unsupported seams. See
+[`docs/voxel-companion-api-v1.md`](docs/voxel-companion-api-v1.md) for the
+contract, limits, ownership rules, and test commands.
+
+If the host detects the old `Ceiling.draw` KFP file-splice marker, it leaves the
+file unchanged and does not export the provider. Reinstall a clean host copy to
+use the API.
+
 ## Main controls
 
 - `V`: cycle voxel camera modes (FULL remains an options-menu preset).
