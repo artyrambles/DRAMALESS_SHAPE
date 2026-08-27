@@ -1113,18 +1113,18 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor)
     return nil
   end
 
-
+  -- replaced by an exported function in 2.0.3 for compatibility with KFP specifically but generally agnostic.
+  -- Voxel3D.draw(terrain, atlasFor(state.map), nil)
+  -- for i, nb in ipairs(state.neighbors or {}) do
+  --   if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then -- added in 2.0.0
+  --     Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
+  --                Mat4.translate(nb.ox, 0, nb.oy))
+  --   end
+  -- end
   if companionFrame then
     pcall(companion.dispatchRenderPhase, companion, "background")
   end
-
-  Voxel3D.draw(terrain, atlasFor(state.map), nil)
-  for i, nb in ipairs(state.neighbors or {}) do
-    if withinRenderDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then -- added in 2.0.0
-      Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy))
-    end
-  end
+  Voxel3D.draw3DTerrain(terrain, atlasFor(state.map), state.neighbors, nbMesh, withinRenderDistance)
 
   -- Without a shadow map (headless, or a driver that could not make the
   -- canvas) the old flat decals stand in: ground-only, characters only,

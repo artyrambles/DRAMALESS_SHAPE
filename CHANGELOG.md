@@ -1,23 +1,31 @@
 # Changelog
 
-## Unreleased
+## 2.0.4
 
-- Added the Voxel Companion API v1 provider without changing the 2.0.3
-  manifest or taking ownership from the official `voxel` render pipeline.
-- Added certified `background`, `opaque_after_terrain`, and
+- Contribution by Bo:
+  - Added the Voxel Companion API v1 provider for compatibility with other mods
+    that need to extensively hook into Dramaless code
+  - Added certified `background`, `opaque_after_terrain`, and
   `translucent_after_actors` extension seams.
-- Added bounded world snapshots, strictly additive camera deltas, normalized
-  service facades, and batched mesh, instance, and billboard drawing.
-- Corrected snapshot scenery semantics so KFP receives authored tree,
-  boulder-tree, and mountain-support tags instead of guesses from generic
-  cylinder, cliff, canopy, stump, planter, or roof render classes.
-- Added deterministic extension ordering, borrowed-context checks, isolated
-  faults, bounded caches, and exact derived-resource release.
-- Added KFP ceiling and wall cutaways from the normalized player cell, with
-  bounded cache variants as the player moves and fail-open incomplete context.
-- Added a read-only refusal for the historical `Ceiling.draw` KFP splice.
-- Added the frozen API conformance suite and host adapter, renderer, fixture,
-  and pipeline-ownership tests.
+  - Added bounded world snapshots, strictly additive camera deltas, normalized
+    service facades, and batched mesh, instance, and billboard drawing.
+  - Corrected snapshot scenery semantics so KFP receives authored tree,
+    boulder-tree, and mountain-support tags instead of guesses from generic
+    cylinder, cliff, canopy, stump, planter, or roof render classes.
+  - Added deterministic extension ordering, borrowed-context checks, isolated
+    faults, bounded caches, and exact derived-resource release.
+  - Added KFP ceiling and wall cutaways from the normalized player cell, with
+    bounded cache variants as the player moves and fail-open incomplete context.
+  - Added a read-only refusal for the historical `Ceiling.draw` KFP splice.
+  - Added the frozen API conformance suite and host adapter, renderer, fixture,
+    and pipeline-ownership tests.
+  
+## 2.0.2 and 2.0.3
+- Fixed math error in render distance calculation (thanks to stavrozo for the contrib!)
+- Contrib from Dorian Burton: overworld sprites bigger than 16x16 (for example added by mods) should now render correctly.
+- Added a MapGrids.lua file to the lib folder. It's a draft and holds info for elevations at certain map coordinates.
+  eventually this should hopefully aid in rendering the map as a not totally flat plane, but for that I first need
+  to gather info about what the actual height of the terrain is. Feel free to contribute.
 
 ## 2.0.0 - Big Fat Cleanup Time
 

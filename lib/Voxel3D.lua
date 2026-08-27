@@ -1114,6 +1114,16 @@ function Voxel3D.endShadows()
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- new in 2.0.3: compatibility for other mods
+function Voxel3D.draw3DTerrain(terrain, atlas, neighbors, nbMesh, inDistance)
+  Voxel3D.draw(terrain, atlas, nil)
+  for i, nb in ipairs(neighbors or {}) do
+    if inDistance({px = nb.ox, py = nb.oy, isPlayer = false}) then -- added in 2.0.0
+      Voxel3D.draw(nbMesh[i], atlas,
+        Mat4.translate(nb.ox, 0, nb.oy))
+    end
+  end
+end
 -- Draw one mesh with `model` (a Mat4) applied. Texture may be nil to keep
 -- whatever the mesh already carries. `pull` moves every vertex toward the
 -- eye along its own ray (see the shader) -- the artifact-free depth bias
