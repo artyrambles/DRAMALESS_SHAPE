@@ -11,6 +11,15 @@ local function overworld()
   return Game and Game.overworld
 end
 
+local function wideBattleLayout(context)
+  local battle = context and context.battle
+  if not (battle and type(battle.isWideBattleLayout) == "function") then
+    return false
+  end
+  local ok, value = pcall(battle.isWideBattleLayout, battle)
+  return ok and value and true or false
+end
+
 function Provider:available()
   local state = overworld()
   return state and state.map and state.player and V.require("Voxel3D").available()
@@ -36,6 +45,13 @@ function Provider:arena(context)
   if not Scene.ready(state, arena) then
     return decline("voxel terrain is not ready")
   end
+
+  -- The 304x144 WIDE layout translates the engine's battle slots while the
+  -- voxel cards stay pinned to arena ground.  Tag the arena before asking
+  -- BattleCam for its rig so both standalone Dramaless and StadiumBattleFX
+  -- receive the WIDE-aware solved camera.
+  arena.uiWide = wideBattleLayout(context)
+
   -- Publish the same canonical rig original Dramaless solves this arena
   -- against. SBFX reads this public arena field for its default camera, so
   -- hosting the voxel stage does not silently substitute Stadium's taller,

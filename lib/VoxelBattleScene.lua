@@ -37,6 +37,24 @@ local function fitScale()
   return math.max(1, math.floor(math.min(w / GB_W, h / GB_H)))
 end
 
+-- WIDE battles may be presented with BATTLE SIZE = FILL.  In that mode
+-- Gen1Recomp scales the 304x144 battle surface by a fractional Up value
+-- (Renderer:frameRects), while fitScale() deliberately stays integer.  The
+-- voxel camera has to use the same presentation scale as the native battle
+-- layer or the world cards are pulled inward relative to move/Poke Ball FX.
+-- Classic battles keep the established integer path unchanged.
+local function presentationScale(arena)
+  if arena and arena.uiWide then
+    local ok, Renderer = pcall(require, "src.render.Renderer")
+    if ok and Renderer and type(Renderer.frameRects) == "function" then
+      local okRects, rects = pcall(Renderer.frameRects, Renderer)
+      local scale = okRects and type(rects) == "table" and tonumber(rects.Up)
+      if scale and scale > 0 then return scale end
+    end
+  end
+  return fitScale()
+end
+
 local function windowCamera(camera, ph, scale)
   if not camera then return nil end
   local out = {}
@@ -148,7 +166,7 @@ function Scene.render(state, arena, drawActors, hostCamera)
   local camera = hostCamera and hostCamera.pose
   local pitch = hostCamera and hostCamera.pitch
   if not camera then camera, pitch = BattleCam.rig(arena, groundY) end
-  camera = windowCamera(camera, ph, fitScale())
+  camera = windowCamera(camera, ph, presentationScale(arena))
   local cx, cy = arena.mid[1], arena.mid[2]
   local vh = frameHeight(camera, BattleCam.frameH(arena))
   local vw = vh * pw / ph

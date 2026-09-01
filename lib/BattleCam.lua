@@ -90,14 +90,34 @@ BattleCam.RIGS = {
     side = 41.98, back = 41.16, height = 28.48,
     lookX = -3.24, lookY = -1.35, frameH = 55.62,
   },
+
+  -- Gen1Recomp WIDE battle layout (304x144).  WideBattle keeps the same
+  -- native 160x144 animation coordinates, then translates the player field
+  -- by (+20,+8) and the enemy field by (+136,0).  These two rigs solve the
+  -- same arena cells against those translated feet/baseline anchors:
+  -- player (46,104), enemy (260,56).  Keeping this in the camera means the
+  -- cards remain attached to real arena ground instead of being screen-space
+  -- sprites pasted over the voxel scene.
+  tele_uiwide = {
+    side = 105.72, back = 92.84, height = 37.88,
+    lookX = -3.17, lookY = 0.34, frameH = 24.93,
+  },
+  wide_uiwide = {
+    side = 58.28, back = 37.29, height = 28.48,
+    lookX = -6.59, lookY = -1.35, frameH = 30.13,
+  },
 }
 
 BattleCam.DEFAULT_RIG = "tele"
 
--- The rig an arena asks for, falling back to the default for anything that
--- does not ask (and for a name that is not one of the two).
+-- The rig an arena asks for, falling back to the default.  uiWide is a
+-- presentation flag added by VoxelBattleArenaProvider when Gen1Recomp is
+-- drawing its 304x144 WIDE battle composition; it must not change CLASSIC.
 function BattleCam.rigFor(arena)
   local want = arena and arena.cam
+  if arena and arena.uiWide then
+    want = (want == "wide") and "wide_uiwide" or "tele_uiwide"
+  end
   return BattleCam.RIGS[want] or BattleCam.RIGS[BattleCam.DEFAULT_RIG]
 end
 
