@@ -3,7 +3,7 @@
 -- selector/host and all Stadium model presentation when it is installed.
 
 local mod = ...
-mod.exports.version = "2.0.3"
+mod.exports.version = "2.0.4"
 
 local V = { mod = mod, path = mod.path }
 local modules, dataFiles = {}, {}
@@ -23,20 +23,6 @@ function V.require(name)
   modules[name] = value
   return value
 end
-
--- newly added in 2.0.3, replaces the previous way of loading the modules
--- not ready yet, must test it first. the old function may be fine.
--- function V.require(name)
---   if modules[name] ~= nil then return modules[name] end
---   local value = require(module_path .. name .. "lua")
---   if value then
---     modules[name] = value
---     return value
---   else
---     mod.log:error("[DRAMALESS_SHAPE] Could not load a required module. Mod will not work.")
---     return nil
---   end
--- end
 
 function V.data(name)
   if dataFiles[name] ~= nil then return dataFiles[name] end
@@ -314,7 +300,9 @@ do
           Pipelines.syncOptions(self.save.options)
           self.save.options.tilt, self.save.options.gbcfx = 0, 0
           require("src.render.Tilt").setLevel(0)
-          require("src.render.GBCFX").setLevel(0)
+          -- changed for recomp 2.21+ compatibility
+          local okFx, GBCFX = pcall(require, "src.render.GBCFX")
+          if okFx then GBCFX.setLevel(0) end
           self:writeOptions()
           V.log:event("options", "hotkey", { key = key })
           return
@@ -355,7 +343,9 @@ local function pinEngineFx(game)
   local changed = opts and ((opts.tilt or 0) ~= 0 or (opts.gbcfx or 0) ~= 0)
   if opts then opts.tilt, opts.gbcfx = 0, 0 end
   pcall(require("src.render.Tilt").setLevel, 0)
-  pcall(require("src.render.GBCFX").setLevel, 0)
+  -- changed for recomp 2.21+ compatibility
+  local okFx, GBCFX = pcall(require, "src.render.GBCFX")
+  if okFx then GBCFX.setLevel(0) end
   if changed and game.writeOptions then pcall(game.writeOptions, game) end
 end
 

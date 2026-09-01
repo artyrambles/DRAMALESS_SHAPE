@@ -19,6 +19,7 @@
   - Added a read-only refusal for the historical `Ceiling.draw` KFP splice.
   - Added the frozen API conformance suite and host adapter, renderer, fixture,
     and pipeline-ownership tests.
+- fixed compatibility with recomp 0.2.21+ by failsafe-wrapping the GBCFX module.
   
 ## 2.0.2 and 2.0.3
 - Fixed math error in render distance calculation (thanks to stavrozo for the contrib!)
