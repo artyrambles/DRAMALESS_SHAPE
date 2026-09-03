@@ -41,13 +41,26 @@
 -- the mod namespace (see main.lua): V.data loads a shipped data file
 local V = ...
 
+local MapElevation = V.require("MapElevation")
+
 local TileShape = {}
+
+-- Water's ORIGINAL flat-world depth, from before elevation existed: a
+-- couple of world-pixels, just enough to cut a shoreline lip on ground
+-- that never had banks to sink below. The deeper FALLBACK_HEIGHTS.water
+-- (and any tileset's data/voxel_heights.lua override) only makes sense
+-- once elevation is actually drawing banks for it to sink below -- with
+-- the ELEVATION setting OFF this substitutes back in so water doesn't
+-- look like it kept an elevation-only depth after everything else it
+-- would have sunk below went flat again.
+local WATER_H_FLAT = -2
 
 -- class -> height fallbacks, used when data/voxel_heights.lua is missing
 -- or omits a class. Same numbers the shipped file carries; a cell is 16x16.
 local FALLBACK_HEIGHTS = {
   ground = 0,
-  water = -2,
+  -- kept in sync with data/voxel_heights.lua's `water` -- see there
+  water = -8,
   void = 0,
   ledge = 6,
   fence = 10,
@@ -255,6 +268,7 @@ function TileShape.heights()
   for class, h in pairs(s and s.heights or {}) do
     if type(h) == "number" and FALLBACK_HEIGHTS[class] then out[class] = h end
   end
+  if not MapElevation.enabled() then out.water = WATER_H_FLAT end
   return out
 end
 
