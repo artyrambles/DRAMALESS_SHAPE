@@ -2,7 +2,7 @@
 
 Dramaless Shape renders the Gen1Recomp overworld as a depth-buffered voxel
 diorama. 
-Version 2.0 strictly only provices voxel environments plus one legacy feature:
+Version 2.0 strictly only provides voxel environments plus one legacy feature:
 native Gen 1 2D battle cards staged on the voxel map.
 
 This is an experimental split release based on the Dramaless development line.
