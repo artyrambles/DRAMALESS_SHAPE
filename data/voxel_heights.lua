@@ -140,7 +140,11 @@ return {
   -- class -> height in world pixels
   heights = {
     ground = 0,
-    water = -2,
+    -- One tile below whatever ground it sits beside -- the old -2 was a
+    -- couple of world-pixels, subtle enough to read as flush with the
+    -- shoreline rather than a recessed pool (reported: a pond looked
+    -- level with the grass around it).
+    water = -8,
     void = 0,
     ledge = 6,
     fence = 10,
