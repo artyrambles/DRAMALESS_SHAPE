@@ -103,6 +103,20 @@ function Quality.renderDistance()
   return math.floor(n)
 end
 
+-- The same ladder answered as CONNECTION HOPS: how much WORLD is drawn,
+-- not how many of the figures standing on it. R.DIST culled only
+-- characters, which is why turning it up never filled the horizon --
+-- ground comes from the neighbourhood the engine loaded (see WorldReach).
+-- Every rung sits above the engine's flat-camera default of 2, because an
+-- eye standing inside the world sees past that default on any device.
+local REACH_HOPS = { [16] = 3, [32] = 4, [64] = 5, [-1] = 6 }
+
+function Quality.reachHops()
+  local ok, v = pcall(Quality.renderDistanceSetting.get,
+                      Quality.renderDistanceSetting)
+  return REACH_HOPS[(ok and tonumber(v)) or 16] or REACH_HOPS[16]
+end
+
 function Quality.shadows()
   -- local ok, v = pcall(Quality.shadowSetting.get, Quality.shadowSetting)
   -- if ok and (v == "off" or v == "high" or v == "low" or v == "soft") then
